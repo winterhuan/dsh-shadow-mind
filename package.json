@@ -1,6 +1,6 @@
 {
   "name": "dsh-shadow-mind",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Parallel cognitive runtime for DeepSeek Harness, ported from pi-shadow-mind",
   "type": "module",
   "keywords": [
@@ -67,5 +67,28 @@
     "@types/node": "^24.0.0",
     "typescript": "^5.9.3",
     "vitest": "^3.2.4"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-agent": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-commands": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-llm": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-session": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-subagent": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-tools": {
+      "optional": true
+    }
   }
 }
