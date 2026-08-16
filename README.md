@@ -28,7 +28,7 @@ DSH plugins are loaded through a Cordis composition (profile or agent preset).
 ### 1. Install the package into a DSH profile
 
 ```bash
-dsh plugin --profile web add dsh-shadow-mind
+dsh plugin --profile web add @winterchenhuan/dsh-shadow-mind
 ```
 
 For local development, point to the package directory instead:
