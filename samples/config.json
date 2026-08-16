@@ -1,0 +1,8 @@
+{
+  "heartbeat_probability": 0.33,
+  "max_parallel_shadows": 2,
+  "default_shadow_timeout_seconds": 300,
+  "headless_drain_timeout_seconds": 120,
+  "result_batch_window_ms": 0,
+  "default_thinking_level": "low"
+}

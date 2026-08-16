@@ -1,8 +1,3 @@
-import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-
-/** Canonical set of valid pi thinking levels, shared by config and registry. */
-export const THINKING_LEVELS: ReadonlySet<ThinkingLevel> = new Set<ThinkingLevel>(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
-
 export function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
@@ -17,8 +12,4 @@ export function isNonEmptyString(value: unknown): value is string {
 
 export function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => isNonEmptyString(item));
-}
-
-export function isThinkingLevel(value: unknown): value is ThinkingLevel {
-  return typeof value === "string" && THINKING_LEVELS.has(value as ThinkingLevel);
 }

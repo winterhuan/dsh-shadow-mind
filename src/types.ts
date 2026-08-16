@@ -1,6 +1,4 @@
-import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-
-export const DEFAULT_READ_TOOLS = ["read", "grep", "find", "ls"] as const;
+export const DEFAULT_READ_TOOLS = ["read", "grep", "glob"] as const;
 
 export interface ShadowConfig {
   heartbeatProbability: number;
@@ -9,7 +7,7 @@ export interface ShadowConfig {
   headlessDrainTimeoutSeconds: number;
   resultBatchWindowMs: number;
   defaultShadowModel?: string;
-  defaultThinkingLevel: ThinkingLevel;
+  defaultThinkingLevel: string;
   randomSeed?: number;
 }
 
@@ -21,7 +19,7 @@ export interface ShadowDefinition {
   activationProbability: number;
   activeForModels: string[];
   runWithModel?: string;
-  thinkingLevel?: ThinkingLevel;
+  thinkingLevel?: string;
   timeoutSeconds?: number;
   tools: string[];
   prompt: string;

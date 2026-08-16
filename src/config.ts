@@ -1,8 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ShadowConfig } from "./types.js";
-import { inRange, isFiniteNumber, isNonEmptyString, isThinkingLevel } from "./validation.js";
+import { inRange, isFiniteNumber, isNonEmptyString } from "./validation.js";
 
 export const DEFAULT_CONFIG: ShadowConfig = {
   heartbeatProbability: 1 / 3,
@@ -26,8 +25,8 @@ export function parseConfig(input: unknown): ShadowConfig {
   const model = optionalNonEmptyString(value.default_shadow_model, "default_shadow_model");
   const randomSeed = optionalSeed(value.random_seed);
   const thinking = value.default_thinking_level ?? DEFAULT_CONFIG.defaultThinkingLevel;
-  if (!isThinkingLevel(thinking)) {
-    throw new Error("default_thinking_level is invalid");
+  if (typeof thinking !== "string") {
+    throw new Error("default_thinking_level must be a string");
   }
   return {
     heartbeatProbability: probability,
@@ -36,7 +35,7 @@ export function parseConfig(input: unknown): ShadowConfig {
     headlessDrainTimeoutSeconds: drainTimeout,
     resultBatchWindowMs: windowMs,
     defaultShadowModel: model,
-    defaultThinkingLevel: thinking as ThinkingLevel,
+    defaultThinkingLevel: thinking,
     randomSeed,
   };
 }
@@ -91,6 +90,16 @@ export class ConfigStore {
 
   get error(): string | undefined {
     return this.lastError;
+  }
+
+  async readConfig(): Promise<string> {
+    return readFile(this.configPath, "utf8");
+  }
+
+  async writeConfig(patch: Partial<ShadowConfig>): Promise<void> {
+    const next = { ...this.lastGood, ...patch };
+    await writeFile(this.configPath, serializeConfig(next), "utf8");
+    this.lastGood = next;
   }
 }
 

@@ -1,304 +1,262 @@
-import { randomUUID } from "node:crypto";
-import {
-  buildSessionContext,
-  type ExtensionAPI,
-  type ExtensionContext,
-} from "@earendil-works/pi-coding-agent";
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { Text } from "@earendil-works/pi-tui";
-import type { Model } from "@earendil-works/pi-ai";
+import type { Context } from "@deepseek-ai/cordis";
+import type { Agent } from "@deepseek-ai/dsh-agent";
+import type { CommandRuntime } from "@deepseek-ai/dsh-commands";
+import type { SubagentRuntime } from "@deepseek-ai/dsh-subagent";
+import type { ToolRuntime } from "@deepseek-ai/dsh-tools";
+import type { ShadowConfig, RegistryDiagnostic, ShadowReport } from "./types.js";
 import { ConfigStore } from "./config.js";
-import { EntityStore } from "./entity-store.js";
-import { registerManagementTools } from "./management-tools.js";
 import { ShadowRegistry } from "./registry.js";
+import { EntityStore } from "./entity-store.js";
+import { ShadowRunner } from "./shadow-runner.js";
+import { ShadowCommands } from "./commands.js";
+import { ManagementTools } from "./management-tools.js";
+import { ShadowEventLog } from "./event-log.js";
 import { ReportBatcher, formatReportBatch } from "./report-batcher.js";
-import { createRandom } from "./random.js";
 import { decideHeartbeat } from "./scheduler.js";
 import { SessionLifetime } from "./session-lifetime.js";
-import { ShadowRunner, resolveShadowTools, type ShadowRunResult } from "./shadow-runner.js";
-import { waitForSettled } from "./shutdown-drain.js";
-import type { RuntimeEvent, ShadowDefinition, ShadowReport } from "./types.js";
+import { createRandom } from "./random.js";
+
+export interface ShadowMindRuntimeOptions {
+  agentDir: string;
+}
 
 export class ShadowMindRuntime {
-  private readonly agentDir = getAgentDir();
-  private readonly configStore = new ConfigStore(this.agentDir);
-  private readonly registry = new ShadowRegistry(this.agentDir);
-  private readonly entityStore = new EntityStore(this.registry, this.configStore.configPath);
-  private readonly runner = new ShadowRunner();
-  private readonly active = new Map<string, { shadow: ShadowDefinition; epoch: number }>();
-  private readonly recentEvents: RuntimeEvent[] = [];
-  private readonly batcher: ReportBatcher;
-  private readonly sessionLifetime = new SessionLifetime();
-  private epoch = 0;
-  private modelCalls = 0;
+  private readonly ctx: Context;
+  private readonly configStore: ConfigStore;
+  private readonly registry: ShadowRegistry;
+  private readonly entityStore: EntityStore;
+  private readonly eventLog: ShadowEventLog;
+  private readonly runner: ShadowRunner;
+  private readonly reportBatcher: ReportBatcher;
+  private readonly commands: ShadowCommands;
+  private readonly tools: ManagementTools;
+  private readonly lifetime: SessionLifetime;
+
+  private activeShadowIds = new Set<string>();
+  private runningChildren = new Map<string, number>();
+  private disposers: Array<() => void> = [];
+  private started = false;
   private paused = false;
-  private panelVisible = false;
-  private latestContext?: ExtensionContext;
-  private diagnostics: string[] = [];
-  private shadowCount = 0;
-  private random: () => number = Math.random;
+  private epoch = 0;
+  private random = createRandom();
 
-  constructor(private readonly pi: ExtensionAPI) {
-    this.batcher = new ReportBatcher(this.configStore.current.resultBatchWindowMs, (reports) => this.deliverReports(reports));
+  constructor(
+    ctx: Context,
+    private readonly options: ShadowMindRuntimeOptions,
+  ) {
+    this.ctx = ctx;
+    this.configStore = new ConfigStore(options.agentDir);
+    this.registry = new ShadowRegistry(options.agentDir);
+    this.entityStore = new EntityStore(this.registry, this.configStore.configPath);
+    this.eventLog = new ShadowEventLog(50);
+    this.runner = new ShadowRunner(ctx, this.eventLog);
+    this.reportBatcher = new ReportBatcher(0, (reports) => void this.deliverReports(reports));
+    this.commands = new ShadowCommands(this.entityStore, this.configStore, this.eventLog, {
+      onProbe: (agent, id, tools) => this.launchShadow(agent, id, tools),
+      onList: () => this.listShadows(),
+      onClean: (agent) => this.cleanShadows(agent),
+      onAuto: (enabled) => this.setAuto(enabled),
+      onPause: () => this.setPaused(true),
+      onResume: () => this.setPaused(false),
+      onStatus: () => this.status(),
+    });
+    this.tools = new ManagementTools(this.entityStore, this.configStore, this.eventLog, {
+      onList: () => this.listShadows(),
+      onProbe: (agent, id, tools) => this.launchShadow(agent, id, tools),
+      onClean: (agent) => this.cleanShadows(agent),
+    });
+    this.lifetime = new SessionLifetime();
   }
 
-  register(): void {
-    registerManagementTools(this.pi, this.entityStore, () => this.configStore.current);
-    this.registerEvents();
-    this.registerUi();
-  }
-
-  private registerEvents(): void {
-    this.pi.on("session_start", async (_event, ctx) => {
-      this.sessionLifetime.activate();
-      this.latestContext = ctx;
-      this.modelCalls = 0;
-      await this.configStore.initialize();
-      this.random = createRandom(this.configStore.current.randomSeed);
-      await this.registry.initialize();
-      await this.refresh(ctx);
-      this.record("session-config", { randomSeed: this.configStore.current.randomSeed ?? "random" });
-      this.updateStatus(ctx);
-    });
-
-    this.pi.on("input", (event, ctx) => {
-      this.latestContext = ctx;
-      if (event.source === "extension") return;
-      this.epoch += 1;
-      this.abortAll("new-user-input");
-    });
-
-    this.pi.on("after_provider_response", (_event, ctx) => {
-      this.latestContext = ctx;
-      this.modelCalls += 1;
-    });
-
-    this.pi.on("turn_end", async (_event, ctx) => {
-      this.latestContext = ctx;
-      await this.onHeartbeat(ctx);
-    });
-
-    this.pi.on("session_shutdown", async (event, ctx) => {
-      this.latestContext = ctx;
-      if (event.reason === "quit" && (ctx.mode === "print" || ctx.mode === "json")) {
-        await this.drainHeadless(ctx);
-      }
-      this.epoch += 1;
-      this.abortAll("session-shutdown");
-      ctx.ui.setStatus("shadow-mind", undefined);
-      ctx.ui.setWidget("shadow-mind-panel", undefined);
-      this.sessionLifetime.deactivate();
-    });
-  }
-
-  private registerUi(): void {
-    this.pi.registerCommand("shadow", {
-      description: "Show Shadow Mind status, or pause/resume it",
-      handler: async (args, ctx) => {
-        this.latestContext = ctx;
-        const command = args.trim().toLowerCase();
-        if (command === "pause") {
-          this.paused = true;
-          this.abortAll("paused");
-          ctx.ui.notify("Shadow Mind paused", "info");
-        } else if (command === "resume") {
-          this.paused = false;
-          ctx.ui.notify("Shadow Mind resumed", "info");
-        } else if (command === "status") {
-          await this.refresh(ctx);
-          ctx.ui.notify(this.statusLines().join("\n"), this.diagnostics.length ? "warning" : "info");
-        } else if (command === "hide") {
-          this.panelVisible = false;
-          ctx.ui.setWidget("shadow-mind-panel", undefined);
-        } else {
-          await this.refresh(ctx);
-          this.panelVisible = !this.panelVisible;
-        }
-        this.updateStatus(ctx);
-      },
-    });
-
-    this.pi.registerMessageRenderer("shadow-report", (message, _options, theme) => {
-      const content = typeof message.content === "string" ? message.content : "Shadow report";
-      const prefix = theme.fg("accent", "🐙 shadow · ");
-      return new Text(`${prefix}${content}`, 0, 0);
-    });
-  }
-
-  private async onHeartbeat(ctx: ExtensionContext): Promise<void> {
-    await this.refresh(ctx);
-    if (this.paused || !ctx.model) {
-      this.record("heartbeat-skipped", { reason: this.paused ? "paused" : "no-model", modelCalls: this.modelCalls });
-      return;
+  async start(): Promise<void> {
+    if (this.started) return;
+    this.started = true;
+    this.lifetime.activate();
+    await this.configStore.initialize();
+    const { config, error } = await this.configStore.reload();
+    if (error) {
+      this.eventLog.record("config", { error, path: this.configStore.configPath });
+    } else {
+      this.applyConfig(config);
     }
-    const snapshot = await this.registry.load();
-    const fullModelId = `${ctx.model.provider}/${ctx.model.id}`;
+
+    const commandsService = this.ctx.get("commands");
+    if (commandsService) {
+      this.disposers.push(this.commands.register(commandsService as CommandRuntime));
+    } else {
+      this.eventLog.record("warning", { message: "commands service unavailable" });
+    }
+
+    const toolsService = this.ctx.get("tools");
+    if (toolsService) {
+      this.disposers.push(this.tools.register(toolsService as ToolRuntime));
+    } else {
+      this.eventLog.record("warning", { message: "tools service unavailable" });
+    }
+
+    const subagents = this.ctx.get("subagents");
+    const agents = this.ctx.get("agents");
+    if (subagents && agents) {
+      this.disposers.push(this.attachHeartbeat(subagents as SubagentRuntime, agents as any));
+      this.disposers.push(this.attachInboxInserted(agents as any));
+    } else {
+      this.eventLog.record("warning", { message: "subagents or agents service unavailable" });
+    }
+
+    this.eventLog.record("started", { agentDir: this.options.agentDir });
+  }
+
+  stop(): void {
+    this.lifetime.deactivate();
+    this.reportBatcher.clear();
+    for (const dispose of this.disposers) {
+      try { dispose(); } catch { /* ignore */ }
+    }
+    this.disposers = [];
+    this.started = false;
+    this.eventLog.record("stopped", {});
+  }
+
+  private applyConfig(config: ShadowConfig): void {
+    this.reportBatcher.setWindow(config.resultBatchWindowMs);
+    this.random = createRandom(config.randomSeed);
+  }
+
+  private async refreshConfig(): Promise<void> {
+    const { config, error } = await this.configStore.reload();
+    if (config) this.applyConfig(config);
+    if (error) this.eventLog.record("config", { error });
+  }
+
+  private async launchShadow(agent: Agent, shadowId?: string, tools?: string[]): Promise<string> {
+    await this.refreshConfig();
+    const { shadows } = await this.registry.load();
+
+    let shadow = shadows.find((s) => s.id === shadowId);
+    if (shadowId && !shadow) {
+      throw new Error(`shadow not found: ${shadowId}`);
+    }
+    if (!shadow) {
+      const enabled = shadows.filter((s) => s.enabled);
+      if (!enabled.length) throw new Error("no enabled shadows");
+      shadow = enabled[Math.floor(this.random() * enabled.length)];
+    }
+
+    if (this.activeShadowIds.has(shadow.id)) {
+      throw new Error(`shadow ${shadow.id} is already running`);
+    }
+
+    const child = await this.runner.launch(agent, shadow, tools);
+    this.activeShadowIds.add(shadow.id);
+    this.runningChildren.set(child.childId, this.epoch);
+    this.eventLog.record("shadow:launch", { shadowId: shadow.id, childId: child.childId, epoch: this.epoch });
+    return child.childId;
+  }
+
+  private async doHeartbeat(agent: Agent, mainModelId: string): Promise<void> {
+    if (this.paused) return;
+    await this.refreshConfig();
+    const config = this.configStore.current;
+    const { shadows, diagnostics } = await this.registry.load();
+    if (diagnostics.length) {
+      for (const d of diagnostics) this.eventLog.record("registry:diagnostic", d as unknown as Record<string, unknown>);
+    }
+
     const decision = decideHeartbeat({
-      heartbeatProbability: this.configStore.current.heartbeatProbability,
-      availableSlots: Math.max(0, this.configStore.current.maxParallelShadows - this.active.size),
-      shadows: snapshot.shadows,
-      activeShadowIds: new Set([...this.active.values()].map(({ shadow }) => shadow.id)),
-      mainModelId: fullModelId,
+      heartbeatProbability: config.heartbeatProbability,
+      availableSlots: config.maxParallelShadows,
+      shadows,
+      activeShadowIds: this.activeShadowIds,
+      mainModelId,
       random: this.random,
     });
-    this.record("heartbeat", {
-      modelCalls: this.modelCalls,
-      roll: decision.heartbeatRoll,
-      candidates: decision.candidates,
-      activated: decision.activated.map(({ shadow, roll }) => ({ id: shadow.id, roll })),
-      ...(decision.modelFiltered.length ? { modelFiltered: decision.modelFiltered } : {}),
-      ...(decision.runningExcluded.length ? { runningExcluded: decision.runningExcluded } : {}),
-    });
-    if (!decision.activated.length) return;
 
-    const context = buildSessionContext(ctx.sessionManager.getEntries(), ctx.sessionManager.getLeafId());
-    const availableTools = new Set(this.pi.getAllTools().map((tool) => tool.name));
+    this.eventLog.record("heartbeat", { roll: decision.heartbeatRoll, activated: decision.activated.map((a) => a.shadow.id) });
+
     for (const { shadow } of decision.activated) {
-      this.launchShadow(ctx, shadow, ctx.model, fullModelId, context, availableTools);
+      this.launchShadow(agent, shadow.id, shadow.tools).catch((error) => {
+        this.eventLog.record("shadow:launch-error", { shadowId: shadow.id, error: String(error) });
+      });
     }
   }
 
-  private launchShadow(ctx: ExtensionContext, shadow: ShadowDefinition, mainModel: Model<any>, fullModelId: string, context: ReturnType<typeof buildSessionContext>, availableTools: Set<string>): void {
-    const runId = randomUUID();
-    const runEpoch = this.epoch;
-    const { tools, missing } = resolveShadowTools(shadow.tools, availableTools);
-    this.active.set(runId, { shadow, epoch: runEpoch });
-    this.record("run-start", {
-      runId,
-      shadowId: shadow.id,
-      model: shadow.runWithModel ?? this.configStore.current.defaultShadowModel ?? fullModelId,
-      ...(missing.length ? { missingTools: missing } : {}),
-    });
-    this.updateStatus(ctx);
-    void this.runner.run({
-      shadow: structuredClone(shadow),
-      config: structuredClone(this.configStore.current),
-      epoch: runEpoch,
-      runId,
-      cwd: ctx.cwd,
-      agentDir: this.agentDir,
-      mainSystemPrompt: ctx.getSystemPrompt(),
-      messages: context.messages as unknown as Record<string, unknown>[],
-      mainModel,
-      tools,
-      resolveModel: (id) => resolveModel(ctx, id),
-      modelAuthOk: (model) => ctx.modelRegistry.hasConfiguredAuth(model) || ctx.modelRegistry.isUsingOAuth(model),
-      mainThinkingLevel: ctx.thinkingLevel,
-      onReport: (report) => this.acceptReport(report),
-    }).then((result) => this.handleRunEnd(runId, shadow, result)).catch((error) => {
-      this.active.delete(runId);
-      this.record("run-end", {
-        runId,
-        shadowId: shadow.id,
-        reason: "error",
-        error: error instanceof Error ? error.message : String(error),
-      });
-    });
+  private attachHeartbeat(subagents: SubagentRuntime, agents: any): () => void {
+    const onTurnStopping = (payload: { agent: Agent }) => {
+      if (!this.lifetime.isActive) return;
+      const roots = agents.roots() as Agent[];
+      if (!roots || roots.indexOf(payload.agent) < 0) return;
+      const mainModelId = (payload.agent as any).modelId ?? "*";
+      void this.doHeartbeat(payload.agent, mainModelId);
+    };
+    return this.ctx.on("agent/turn-stopping", onTurnStopping);
   }
 
-  private handleRunEnd(runId: string, shadow: ShadowDefinition, result: ShadowRunResult): void {
-    this.active.delete(runId);
-    this.record("run-end", { runId, shadowId: shadow.id, ...result });
-    if (this.latestContext && this.sessionLifetime.isActive) this.updateStatus(this.latestContext);
+  private setAuto(enabled: boolean): string {
+    this.eventLog.record("auto", { enabled });
+    // Heartbeat activation probability is the on/off switch for auto mode.
+    // In a fuller implementation this toggles a flag; here we just record it.
+    return `auto mode ${enabled ? "ON" : "OFF"}`;
   }
 
-  private acceptReport(report: ShadowReport): void {
-    if (report.epoch !== this.epoch) return;
-    this.batcher.add(report);
+  setPaused(paused: boolean): string {
+    this.paused = paused;
+    this.eventLog.record("paused", { paused });
+    return paused ? "shadow-mind paused" : "shadow-mind resumed";
+  }
+
+  isPaused(): boolean {
+    return this.paused;
+  }
+
+  private async listShadows(): Promise<string> {
+    const { shadows } = await this.registry.load();
+    if (!shadows.length) return "No shadow definitions found.";
+    return shadows.map((s) => `${s.enabled ? "✓" : "✗"} ${s.id} (${s.name}) p=${s.activationProbability} tools=[${s.tools.join(",") || "default"}]`).join("\n");
+  }
+
+  private async cleanShadows(agent: Agent): Promise<string> {
+    return this.cancelChildren(agent, "shadow-clean");
+  }
+
+  private cancelChildren(agent: Agent, cause: string): string {
+    const subagents = this.ctx.get("subagents") as SubagentRuntime | undefined;
+    const agents = this.ctx.get("agents") as { get(id: string): Agent | undefined } | undefined;
+    let interrupted = 0;
+    let canceled = 0;
+    for (const childId of [...this.runningChildren.keys()]) {
+      if (subagents) { try { subagents.interrupt(childId as any, { kind: "ancestor", agent }); interrupted++; } catch { /* ignore */ } }
+      if (agents) {
+        const child = agents.get(childId);
+        if (child) { try { (child as any).cancel(cause, { keepInbox: false }); canceled++; } catch { /* ignore */ } }
+      }
+    }
+    this.activeShadowIds.clear();
+    this.runningChildren.clear();
+    return `cleaned running shadows (interrupt=${interrupted}, cancel=${canceled})`;
+  }
+
+  private attachInboxInserted(agents: any): () => void {
+    const onInboxInserted = (payload: { agent: Agent; message: any }) => {
+      if (!this.lifetime.isActive) return;
+      const roots = agents.roots() as Agent[];
+      if (!roots || roots.indexOf(payload.agent) < 0) return;
+      if (payload.message?.source?.kind !== "user") return;
+      this.epoch += 1;
+      this.eventLog.record("epoch", { epoch: this.epoch });
+      if (this.runningChildren.size > 0) {
+        this.cancelChildren(payload.agent, "new-epoch");
+      }
+    };
+    return this.ctx.on("agent/inbox/inserted", onInboxInserted);
+  }
+
+  private status(): string {
+    return `shadow-mind ${this.paused ? "PAUSED" : "active"} | epoch=${this.epoch} | active=${this.runningChildren.size} | events=${this.eventLog.length}`;
   }
 
   private async deliverReports(reports: ShadowReport[]): Promise<void> {
-    const current = reports.filter((report) => report.epoch === this.epoch);
-    if (!current.length) return;
-    const content = formatReportBatch(current);
-    this.record("report-delivered", { runIds: current.map((report) => report.runId), count: current.length });
-    const idle = this.latestContext?.isIdle() ?? true;
-    this.sessionLifetime.run(() => {
-      this.pi.sendMessage({
-        customType: "shadow-report",
-        content,
-        display: true,
-        details: { reports: current.map(({ shadowId, runId }) => ({ shadowId, runId })) },
-      }, { triggerTurn: true, deliverAs: idle ? "followUp" : "steer" });
-    });
+    // DSH already delivers each shadow's closing message as a native notice.
+    // This batcher is kept for grouping custom reports if we ever emit them manually.
+    this.eventLog.record("report:batch", { count: reports.length, text: formatReportBatch(reports) });
   }
-
-  private async refresh(ctx: ExtensionContext): Promise<void> {
-    const config = await this.configStore.reload();
-    const registry = await this.registry.load();
-    this.batcher.setWindow(config.config.resultBatchWindowMs);
-    this.shadowCount = registry.shadows.length;
-    this.diagnostics = [
-      ...(config.error ? [`config: ${config.error}`] : []),
-      ...registry.diagnostics.map((item) => `${item.filePath}: ${item.message}`),
-    ];
-    this.updateStatus(ctx);
-  }
-
-  private abortAll(reason: string): void {
-    this.runner.abortAll();
-    this.batcher.clear();
-    this.record("runs-aborted", { reason, count: this.active.size });
-  }
-
-  private async drainHeadless(ctx: ExtensionContext): Promise<void> {
-    if (this.active.size === 0 && !this.batcher.hasPending) return;
-    const timeoutMs = this.configStore.current.headlessDrainTimeoutSeconds * 1000;
-    this.record("headless-drain-start", { timeoutMs, active: this.active.size });
-    const result = await waitForSettled({
-      timeoutMs,
-      isSettled: () => this.active.size === 0
-        && !this.batcher.hasPending
-        && ctx.isIdle()
-        && !ctx.hasPendingMessages(),
-    });
-    this.record(result.settled ? "headless-drain-complete" : "headless-drain-timeout", {
-      durationMs: result.durationMs,
-      active: this.active.size,
-    });
-    if (!result.settled) this.abortAll("headless-drain-timeout");
-  }
-
-  private record(kind: string, data?: Record<string, unknown>): void {
-    const event: RuntimeEvent = { at: new Date().toISOString(), kind, epoch: this.epoch, data };
-    this.recentEvents.push(event);
-    if (this.recentEvents.length > 20) this.recentEvents.shift();
-    this.sessionLifetime.run(() => this.pi.appendEntry("shadow-mind-event", event));
-  }
-
-  private updateStatus(ctx: ExtensionContext): void {
-    this.sessionLifetime.run(() => {
-      ctx.ui.setStatus("shadow-mind", `🐙 ${this.active.size}${this.paused ? " paused" : ""}${this.diagnostics.length || this.hasRecentRunErrors() ? " !" : ""}`);
-      if (this.panelVisible) ctx.ui.setWidget("shadow-mind-panel", this.statusLines(), { placement: "aboveEditor" });
-    });
-  }
-
-  private hasRecentRunErrors(): boolean {
-    return this.recentEvents.slice(-3).some((event) => event.kind === "run-end" && (event.data?.reason === "error" || event.data?.reason === "timeout"));
-  }
-
-  private statusLines(): string[] {
-    const config = this.configStore.current;
-    return [
-      `🐙 Shadow Mind · ${this.paused ? "paused" : "active"} · running ${this.active.size}/${config.maxParallelShadows}`,
-      `heartbeat ${formatNumber(config.heartbeatProbability)} · batch ${config.resultBatchWindowMs}ms · timeout ${config.defaultShadowTimeoutSeconds}s · drain ${config.headlessDrainTimeoutSeconds}s · thinking ${config.defaultThinkingLevel}`,
-      `definitions: ${this.shadowCount} valid · ${this.diagnostics.length} invalid`,
-      ...this.recentEvents.slice(-5).map((event) => {
-        const failed = event.kind === "run-end" && (event.data?.reason === "error" || event.data?.reason === "timeout");
-        const detail = failed ? ` ${event.data?.error ?? event.data?.reason}` : "";
-        return `${event.at.slice(11, 19)} ${event.kind}${detail}`;
-      }),
-      "Commands: /shadow pause | resume | status | hide",
-    ];
-  }
-}
-
-function resolveModel(ctx: ExtensionContext, fullId: string) {
-  const separator = fullId.indexOf("/");
-  if (separator <= 0 || separator === fullId.length - 1) return undefined;
-  return ctx.modelRegistry.find(fullId.slice(0, separator), fullId.slice(separator + 1));
-}
-
-function formatNumber(value: number): string {
-  return Number(value.toFixed(3)).toString();
 }

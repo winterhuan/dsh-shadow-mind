@@ -1,4 +1,4 @@
-import { summarizeToolResult } from "./summaries.js";
+import { summarizeToolResult, summarizeToolCall } from "./summaries.js";
 
 type MessageLike = { role?: string; content?: unknown; [key: string]: unknown };
 
@@ -26,7 +26,7 @@ export function serializeTrajectory(messages: readonly MessageLike[]): string {
         const item = block as { type?: string; text?: string; id?: string; name?: string; arguments?: unknown };
         if (item.type === "text" && item.text) lines.push(`MAIN: ${item.text}`);
         if (item.type === "toolCall" && item.name) {
-          const call = `${item.name}(${compactJson(item.arguments)})`;
+          const call = summarizeToolCall(item.name, item.arguments);
           const result = item.id ? results.get(item.id) : undefined;
           lines.push(`TOOL: ${call}${result ? ` · ${result}` : ""}`);
         }

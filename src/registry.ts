@@ -1,9 +1,8 @@
 import { mkdir, readFile, readdir, stat } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
-import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import YAML from "yaml";
 import type { RegistryDiagnostic, RegistrySnapshot, ShadowDefinition } from "./types.js";
-import { inRange, isFiniteNumber, isNonEmptyString, isStringArray, isThinkingLevel } from "./validation.js";
+import { inRange, isFiniteNumber, isNonEmptyString, isStringArray } from "./validation.js";
 
 const ID_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
 
@@ -83,7 +82,7 @@ export function parseShadowMarkdown(source: string, filePath: string): ShadowDef
     activationProbability: probabilityValue(value.activation_probability, 0.3, "activation_probability"),
     activeForModels: stringArray(value.active_for_models, ["*"], "active_for_models"),
     runWithModel: optionalString(value.run_with_model, "run_with_model"),
-    thinkingLevel: optionalThinking(value.thinking_level),
+    thinkingLevel: optionalString(value.thinking_level, "thinking_level"),
     timeoutSeconds: optionalPositiveNumber(value.timeout_seconds, "timeout_seconds"),
     tools: stringArray(value.tools, [], "tools"),
     prompt,
@@ -119,8 +118,4 @@ function stringArray(value: unknown, fallback: string[], name: string): string[]
   if (!isStringArray(value)) throw new Error(`${name} must be an array of non-empty strings`);
   return [...new Set(value.map((item) => item.trim()))];
 }
-function optionalThinking(value: unknown): ThinkingLevel | undefined {
-  if (value === undefined) return undefined;
-  if (!isThinkingLevel(value)) throw new Error("thinking_level is invalid");
-  return value;
-}
+

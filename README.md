@@ -1,208 +1,135 @@
-# Pi Shadow Mind
+# dsh-shadow-mind
 
-![Pi Shadow Mind — the main agent builds while Shadow Minds review, verify, and maintain](./assets/shadow-mind-hero-v2.png)
+Parallel cognitive runtime for [DeepSeek Harness](https://github.com/deepseek-ai/dsh) (DSH / Cordis).
 
-**Configurable cognitive cores for Pi.**
+This package is a DSH port of the original [pi-shadow-mind](https://github.com/liuzhengdongfortest/pi-shadow-mind) project, which runs multiple "Shadow Mind" agents beside a main agent to provide independent reviews, fact-checking, and parallel cognitive work.
 
-**为 Pi 配置多个独立的认知核心。**
+> **Status**: functional prototype / early port. Core heartbeat scheduling, read-only shadow agents, and management tools work end-to-end. Several advanced features from `pi-shadow-mind` are not yet fully migrated. See [Gaps vs pi-shadow-mind](#gaps-vs-pi-shadow-mind) below.
 
-[English](#english) · [中文](#中文)
+## Relation to pi-shadow-mind
 
-## English
+- Original project: https://github.com/liuzhengdongfortest/pi-shadow-mind
+- This port adapts the same concepts to the DSH/Cordis runtime.
+- Because DSH uses different primitives (continuable subagents, native background notices, and the Cordis plugin model), the implementation is not a line-by-line translation.
 
-Pi Shadow Mind runs specialized agents alongside the main agent. Each Shadow Mind owns a persistent responsibility—architecture, correctness, documentation, project grounding, or anything else you define.
+## Features
 
-While the main agent implements, other minds can independently review decisions, verify claims, maintain related files, and intervene before mistakes become expensive to undo.
+- **Heartbeat scheduling**: After each main-agent turn, randomly activates configured Shadow Minds.
+- **Read-only shadows**: Each shadow receives a sanitized main-session trajectory and a restricted tool allowlist.
+- **Management tools**: Create, update, delete, list, enable, and disable shadow definitions via model tools.
+- **Config tools**: Read and write the global `config.json` via model tools.
+- **Pause/resume/epoch**: `/shadow pause` and `/shadow resume`; new user input increments the epoch and cancels running shadows from the previous epoch.
+- **Tool-call argument redaction**: Tool-call arguments are redacted before being forwarded to shadows (credentials are not leaked). Tool results are summarized.
 
-> Build and review in the same pass.
-
-### One agent, multiple responsibilities
-
-The main agent keeps moving. Shadow Minds independently protect the parts of the work that matter to you.
-
-| Cognitive core | Responsibility |
-|---|---|
-| Architecture review | Detect growing god components, misplaced responsibilities, missing module boundaries, and fragile extension points while code is being written |
-| Project grounding | Check claims against the actual repository and catch invented APIs, files, constraints, or implementation details |
-| Documentation maintenance | Track implementation changes and keep architecture notes, decisions, and usage documentation aligned |
-| Completion review | Independently verify that the result satisfies the task before the main agent declares it finished |
-
-These are not temporary tasks delegated by the main agent. They are persistent, user-defined cognitive roles that decide independently when to inspect, act, or report.
-
-### Shadows can review—or work
-
-A Shadow Mind may remain read-only and report findings to the main agent, or receive additional tools and own a parallel line of work.
-
-While the main agent writes code, another Shadow can maintain documentation, update architectural decisions, or work on a separate file. Tool access is configured per Shadow, so each cognitive core receives only the capabilities its responsibility requires.
-
-```text
-Main Agent          Architecture Shadow
-implements feature  reviews module boundaries
-
-Main Agent          Documentation Shadow
-writes code         maintains design documentation
-```
-
-Review is only one possible responsibility. A Shadow Mind can observe, verify, maintain, or build.
-
-### Start with an Architecture Shadow
-
-Create `~/.pi/agent/shadow-minds/architecture-review.md`:
-
-```markdown
----
-id: architecture-review
-name: Architecture review
-activation_probability: 0.3
-active_for_models: ["*"]
-tools: [read, grep]
----
-
-Review the main agent's current implementation for architectural drift.
-
-Check whether responsibilities have clear owners, modules have coherent
-boundaries, and new behavior uses appropriate extension points. Detect growing
-god components, unrelated state or methods accumulating in one module, and
-business differences implemented as expanding conditionals.
-
-Report only concrete, actionable issues grounded in the visible trajectory or
-repository. If the current work is unrelated, do not intervene.
-```
-
-This Shadow is read-only. It reviews the implementation in parallel and reports concrete architectural concerns without taking control of the main task.
-
-### How it works
-
-After every main-agent `turn_end`, the extension evaluates a heartbeat. By default, the heartbeat fires with probability `1/3`; eligible Shadow Minds then roll independently using their own activation probabilities, with at most two running concurrently.
-
-Each activation starts a fresh temporary session. It inherits the main agent's unchanged system prompt but receives only a sanitized plain-text trajectory: assistant thinking is removed, while tool calls retain compact, deterministic result summaries.
-
-A Shadow first decides whether the trajectory is relevant to its responsibility. If unrelated, it exits without calling tools or `report_to_main`. When the main agent should receive a concrete result, the Shadow calls `report_to_main`, which immediately ends that run.
-
-Shadow definitions are ordinary Markdown files. They can be created and adjusted by the user or managed by the agent through the extension's tools. Model filters and activation probabilities allow different models to receive different supporting minds.
-
-### Installation
+## Installation
 
 ```bash
-pi install npm:pi-shadow-mind@0.1.10
+npm install dsh-shadow-mind
 ```
 
-On the first session start, the extension creates:
+Then load it in your DSH/Cordis composition (e.g., agent preset) as a plugin. The package exports a default plugin factory from `dist/index.js`.
 
-```text
-~/.pi/agent/shadow-minds/
-  config.json
-  *.md
-  logs/<shadow-id>/*.jsonl   # only when debug: true
+## Configuration
+
+Shadow definitions and global config live in:
+
+```
+~/.dsh/agent/shadow-minds/
+├── config.json
+├── grounded-reviewer.md
+├── requirement-keeper.md
+└── ...
 ```
 
-No default Shadow Mind is created. The global runtime timeout defaults to 300 seconds, and individual Shadows may override it with `timeout_seconds`.
+Example `config.json`:
 
-Use `/shadow` to toggle the status panel, `/shadow status` for a summary, and `/shadow pause` or `/shadow resume` for the current session. Management tools can list, create, update, enable, disable, and delete Shadow Minds, as well as read or update the global configuration. Every write requires user confirmation.
-
-For development:
-
-```powershell
-npm install
-pi -e ./src/index.ts
+```json
+{
+  "heartbeat_probability": 0.33,
+  "max_parallel_shadows": 2,
+  "default_shadow_timeout_seconds": 120,
+  "headless_drain_timeout_seconds": 30,
+  "result_batch_window_ms": 5000,
+  "default_shadow_model": null,
+  "default_thinking_level": "low",
+  "random_seed": null
+}
 ```
 
-See [DESIGN.md](./DESIGN.md) for the behavioral contract and [BENCHMARK.md](./BENCHMARK.md) for benchmark methodology and lessons learned.
+Example shadow definition `grounded-reviewer.md`:
 
-## 中文
+```md
+---
+id: grounded-reviewer
+name: Project Grounding Checker
+enabled: true
+activation_probability: 0.6
+run_with_model: openai/gpt-5-mini
+thinking_level: low
+tools:
+  - read
+  - grep
+  - glob
+---
 
-Pi Shadow Mind 让多个专业化认知核心与主 Agent 并行工作。每个 Shadow Mind 都拥有一项持续、稳定的职责，例如架构审阅、正确性检查、文档维护、项目事实核验，或任何由你定义的任务。
+Check whether the main agent's claims are supported by the current workspace. If nothing is worth reporting, reply exactly: NOT_RELEVANT.
+```
 
-主 Agent 负责持续推进，其他认知核心则独立审阅决策、核验事实、维护相关文件，并在错误产生高昂返工成本之前介入。
+## Commands
 
-> 让实现与审阅发生在同一轮工作中。
+Use the single `/shadow` umbrella command:
 
-### 一个 Agent，多项独立职责
+```
+/shadow status
+/shadow probe <id> [tools]
+/shadow list
+/shadow clean
+/shadow auto <on|off>
+/shadow pause
+/shadow resume
+```
 
-| 认知核心 | 职责 |
+## Management Tools
+
+These are registered as model-callable tools:
+
+- `list_shadows`
+- `create_shadow`
+- `update_shadow`
+- `delete_shadow`
+- `enable_shadow`
+- `disable_shadow`
+- `trigger_shadow`
+- `read_shadow_config`
+- `write_shadow_config`
+
+## Gaps vs pi-shadow-mind
+
+The following features from the original `pi-shadow-mind` are not yet fully migrated:
+
+| Feature | Status |
 |---|---|
-| 架构审阅 | 在编码过程中发现上帝组件、职责错位、模块边界缺失和脆弱的扩展点 |
-| 项目事实核验 | 对照真实仓库检查结论，发现模型编造的 API、文件、约束和实现细节 |
-| 文档维护 | 跟踪实现变化，让架构说明、设计决策和使用文档保持同步 |
-| 完成度审阅 | 在主 Agent 宣布完成前，独立检查结果是否真正满足任务要求 |
+| Independent Shadow AgentSession | **Partial**: DSH continuable subagents are used instead of a separate Pi AgentSession. |
+| `report_to_main` tool | **Missing**: DSH native background notices are used instead. Report batching and `steer`/`followUp` are not yet replicated. |
+| Tool allowlist resolution (`resolveShadowTools`) | **Simplified**: missing-tool reporting and `report_to_main` injection are not implemented. |
+| Per-shadow model auth check | **Missing**: `run_with_model` is passed as `agentOptions`, but auth validation is not performed. |
+| Per-shadow `timeout_seconds` | **Not enforced**: DSH subagent spec does not expose a direct per-run timeout. |
+| Per-shadow `thinking_level` | **Not applied**: DSH uses reasoning effort, which is not yet mapped. |
+| Shutdown drain / headless mode | **Missing**: no `waitForSettled` or headless drain. |
+| Debug session logs | **Skipped**: per-user request, no JSONL session logs are written. |
+| UI status panel / message renderer | **Partial**: a Client indicator exists in the dynamic prototype; the real package currently only exposes `/shadow`. |
+| Test suite | **Missing**: original tests were removed during the port and not yet rewritten for DSH. |
 
-它们不是主 Agent 临时委派的任务，而是由用户定义、持续存在的认知职责，可以独立决定何时检查、行动或汇报。
+See the original [DESIGN.md](DESIGN.md) for the full design (this is the original pi-shadow-mind design; it describes goals that are only partially implemented in this DSH port).
 
-### Shadow 不只审阅，也可以工作
-
-Shadow Mind 可以保持只读，只向主 Agent 汇报发现；也可以获得额外工具，独立负责另一条任务线。
-
-当主 Agent 编写代码时，另一个 Shadow 可以同步维护文档、更新架构决策，或处理独立文件。工具权限由每个 Shadow 单独配置，因此每个认知核心只获得其职责真正需要的能力。
-
-```text
-主 Agent             Architecture Shadow
-实现功能              审阅模块边界
-
-主 Agent             Documentation Shadow
-编写代码              维护设计文档
-```
-
-审阅只是一种职责。Shadow Mind 可以观察、核验、维护，也可以直接构建。
-
-### 从 Architecture Shadow 开始
-
-创建 `~/.pi/agent/shadow-minds/architecture-review.md`：
-
-```markdown
----
-id: architecture-review
-name: Architecture review
-activation_probability: 0.3
-active_for_models: ["*"]
-tools: [read, grep]
----
-
-审阅主 Agent 当前实现是否正在偏离合理架构。
-
-检查每项职责是否有明确所有者、模块边界是否内聚、新能力是否使用了合适的扩展点。
-发现不断膨胀的上帝组件、堆积在同一模块中的无关状态与方法，以及用持续增长的条件
-分支承载业务差异的实现。
-
-只报告能够从当前轨迹或仓库中得到证据、并且可以采取行动的问题。如果当前工作与该职责
-无关，不要介入。
-```
-
-这个 Shadow 默认只读。它会在实现过程中并行审阅架构，并向主 Agent 报告具体问题，但不会接管主任务。
-
-### 工作方式
-
-每次主 Agent `turn_end` 后，扩展都会进行一次 heartbeat 判断。heartbeat 默认以 `1/3` 的概率触发，符合条件的 Shadow Minds 再按照各自的激活概率独立抽选，默认最多同时运行两个。
-
-每次激活都会创建一个全新的临时 Session。它继承主 Agent 原封不动的 system prompt，但只接收净化后的文本轨迹：思考内容会被移除，工具调用后仅保留简洁、确定性的结果概述。
-
-Shadow 会先判断轨迹是否与自己的职责相关。无关时直接结束，不调用工具或 `report_to_main`；需要向主 Agent 提交具体结果时，通过 `report_to_main` 上报并立即结束本轮。
-
-Shadow 定义只是普通 Markdown 文件，可以由用户创建和调整，也可以由 Agent 通过扩展工具管理。模型过滤和独立激活概率允许不同模型获得不同的辅助认知核心。
-
-### 安装
+## Development
 
 ```bash
-pi install npm:pi-shadow-mind@0.1.10
-```
-
-首次启动 Session 时，扩展会创建：
-
-```text
-~/.pi/agent/shadow-minds/
-  config.json
-  *.md
-  logs/<shadow-id>/*.jsonl   # 仅在 debug: true 时生成
-```
-
-扩展不会默认创建 Shadow Mind。全局默认运行超时为 300 秒，单个 Shadow 可以通过 `timeout_seconds` 覆盖。
-
-使用 `/shadow` 显示或隐藏状态面板，`/shadow status` 查看摘要，`/shadow pause` 和 `/shadow resume` 暂停或恢复当前 Session。管理工具可以查询、创建、更新、启用、禁用和删除 Shadow Mind，以及读取或修改全局配置。所有写操作都需要用户确认。
-
-开发模式：
-
-```powershell
 npm install
-pi -e ./src/index.ts
+npm run typecheck
+npm run build
 ```
 
-完整行为约定见 [DESIGN.md](./DESIGN.md)，Benchmark 方法与经验见 [BENCHMARK.md](./BENCHMARK.md)。
+## License
+
+MIT

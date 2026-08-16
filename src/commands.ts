@@ -1,0 +1,65 @@
+import type { Agent } from "@deepseek-ai/dsh-agent";
+import type { CommandRuntime, CommandInvocation } from "@deepseek-ai/dsh-commands";
+import { ConfigStore } from "./config.js";
+import { EntityStore } from "./entity-store.js";
+import { ShadowEventLog } from "./event-log.js";
+
+export interface ShadowCommandsOptions {
+  onProbe: (agent: Agent, id?: string, tools?: string[]) => Promise<string>;
+  onList: () => Promise<string>;
+  onClean: (agent: Agent) => Promise<string>;
+  onAuto: (enabled: boolean) => string;
+  onPause: () => string;
+  onResume: () => string;
+  onStatus: () => string;
+}
+
+export class ShadowCommands {
+  constructor(
+    private readonly entityStore: EntityStore,
+    private readonly configStore: ConfigStore,
+    private readonly eventLog: ShadowEventLog,
+    private readonly handlers: ShadowCommandsOptions,
+  ) {}
+
+  register(commands: CommandRuntime): () => void {
+    return commands.register({
+      name: "shadow",
+      description: "Shadow Mind: /shadow status | probe <id> [tools] | list | clean | auto <on|off> | pause | resume",
+      input: { hint: "status | probe <id> [tools] | list | clean | auto <on|off> | pause | resume" },
+      handler: async (invocation: CommandInvocation) => {
+        const raw = invocation.rawInput.trim();
+        const parts = raw.split(/\s+/);
+        const sub = parts[0] || "status";
+        const rest = parts.slice(1).join(" ");
+        try {
+          switch (sub) {
+            case "status":
+              return { kind: "success", text: this.handlers.onStatus() };
+            case "probe": {
+              const probeParts = rest.trim().split(/\s+/);
+              const id = probeParts[0] || undefined;
+              const tools = probeParts[1] ? probeParts[1].split(",") : undefined;
+              const text = await this.handlers.onProbe(invocation.agent, id, tools);
+              return { kind: "success", text };
+            }
+            case "list":
+              return { kind: "success", text: await this.handlers.onList() };
+            case "clean":
+              return { kind: "success", text: await this.handlers.onClean(invocation.agent) };
+            case "auto":
+              return { kind: "success", text: this.handlers.onAuto(rest.trim().toLowerCase() === "on") };
+            case "pause":
+              return { kind: "success", text: this.handlers.onPause() };
+            case "resume":
+              return { kind: "success", text: this.handlers.onResume() };
+            default:
+              return { kind: "success", text: "Usage: /shadow status | probe <id> [tools] | list | clean | auto <on|off> | pause | resume\n" + this.handlers.onStatus() };
+          }
+        } catch (error) {
+          return { kind: "error", text: String(error) };
+        }
+      },
+    });
+  }
+}

@@ -10,6 +10,18 @@ const summarizers = new Map<string, Summarizer>([
   ["ls", (result) => summarizeLines(result, "entries")],
 ]);
 
+export function summarizeToolCall(name: string, args: unknown): string {
+  if (typeof args !== "object" || args === null) {
+    return `${name}()`;
+  }
+  const value = args as Record<string, unknown>;
+  const keys = Object.keys(value);
+  if (!keys.length) return `${name}()`;
+  // Redact argument values by default; keep keys to give the shadow a sense of what was attempted.
+  const redacted = keys.map((key) => `${key}: [redacted]`).join(", ");
+  return `${name}({ ${redacted} })`;
+}
+
 export function summarizeToolResult(result: ToolResultLike): string {
   const summary = summarizers.get(result.toolName ?? "")?.(result) ?? summarizeGeneric(result);
   return result.isError ? `error · ${summary}` : summary;

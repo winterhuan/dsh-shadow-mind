@@ -1,6 +1,12 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { Context } from "@deepseek-ai/cordis";
 import { ShadowMindRuntime } from "./runtime.js";
 
-export default function shadowMindExtension(pi: ExtensionAPI): void {
-  new ShadowMindRuntime(pi).register();
+export * from "./runtime.js";
+export * from "./types.js";
+
+export default function apply(ctx: Context): () => void {
+  const agentDir = process.env.HOME ?? ".";
+  const runtime = new ShadowMindRuntime(ctx, { agentDir });
+  void runtime.start();
+  return () => runtime.stop();
 }
