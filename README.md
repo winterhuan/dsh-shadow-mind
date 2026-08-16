@@ -37,18 +37,11 @@ For local development, point to the package directory instead:
 dsh plugin --profile web add /path/to/dsh-shadow-mind
 ```
 
-### 2. Add the plugin row
+### 2. Restart DSH
 
-In the profile's `cordis.yml` (or agent preset `.cordis.yml`), add:
+The package ships a `cordis.patch.yml`. `dsh plugin --profile web add` applies it automatically, so no manual `cordis.yml` editing is needed.
 
-```yaml
-- id: shadow-mind
-  name: dsh-shadow-mind
-```
-
-### 3. Restart DSH
-
-DSH will load the plugin on startup. The package exports a default Cordis plugin factory from `dist/index.js`.
+Restart DSH and the plugin will be loaded. The package exports a default Cordis plugin factory from `dist/index.js`.
 
 ## Configuration
 
