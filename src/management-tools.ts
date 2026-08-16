@@ -1,5 +1,5 @@
 import type { Agent } from "@deepseek-ai/dsh-agent";
-import type { ToolRuntime } from "@deepseek-ai/dsh-tools";
+import type { ToolRegistry } from "@deepseek-ai/dsh-tools";
 import type { ContentBlock } from "@deepseek-ai/dsh-llm";
 import type { EntityStore } from "./entity-store.js";
 import { describeShadow } from "./entity-store.js";
@@ -30,7 +30,7 @@ export class ManagementTools {
     private readonly handlers: ManagementToolHandlers,
   ) {}
 
-  register(tools: ToolRuntime): () => void {
+  register(tools: ToolRegistry): () => void {
     const disposers: Array<() => void> = [];
 
     disposers.push(

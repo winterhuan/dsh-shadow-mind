@@ -1,8 +1,8 @@
 import type { Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
-import type { CommandRuntime } from "@deepseek-ai/dsh-commands";
-import type { SubagentRuntime } from "@deepseek-ai/dsh-subagent";
-import type { ToolRuntime } from "@deepseek-ai/dsh-tools";
+import type { CommandService } from "@deepseek-ai/dsh-commands";
+import type { SubagentService } from "@deepseek-ai/dsh-subagent";
+import type { ToolRegistry } from "@deepseek-ai/dsh-tools";
 import type { ShadowConfig, RegistryDiagnostic, ShadowReport } from "./types.js";
 import { ConfigStore } from "./config.js";
 import { ShadowRegistry } from "./registry.js";
@@ -82,14 +82,14 @@ export class ShadowMindRuntime {
 
     const commandsService = this.ctx.get("commands");
     if (commandsService) {
-      this.disposers.push(this.commands.register(commandsService as CommandRuntime));
+      this.disposers.push(this.commands.register(commandsService as CommandService));
     } else {
       this.eventLog.record("warning", { message: "commands service unavailable" });
     }
 
     const toolsService = this.ctx.get("tools");
     if (toolsService) {
-      this.disposers.push(this.tools.register(toolsService as ToolRuntime));
+      this.disposers.push(this.tools.register(toolsService as ToolRegistry));
     } else {
       this.eventLog.record("warning", { message: "tools service unavailable" });
     }
@@ -97,7 +97,7 @@ export class ShadowMindRuntime {
     const subagents = this.ctx.get("subagents");
     const agents = this.ctx.get("agents");
     if (subagents && agents) {
-      this.disposers.push(this.attachHeartbeat(subagents as SubagentRuntime, agents as any));
+      this.disposers.push(this.attachHeartbeat(subagents as SubagentService, agents as any));
       this.disposers.push(this.attachInboxInserted(agents as any));
     } else {
       this.eventLog.record("warning", { message: "subagents or agents service unavailable" });
@@ -180,7 +180,7 @@ export class ShadowMindRuntime {
     }
   }
 
-  private attachHeartbeat(subagents: SubagentRuntime, agents: any): () => void {
+  private attachHeartbeat(subagents: SubagentService, agents: any): () => void {
     const onTurnStopping = (payload: { agent: Agent }) => {
       if (!this.lifetime.isActive) return;
       const roots = agents.roots() as Agent[];
@@ -219,7 +219,7 @@ export class ShadowMindRuntime {
   }
 
   private cancelChildren(agent: Agent, cause: string): string {
-    const subagents = this.ctx.get("subagents") as SubagentRuntime | undefined;
+    const subagents = this.ctx.get("subagents") as SubagentService | undefined;
     const agents = this.ctx.get("agents") as { get(id: string): Agent | undefined } | undefined;
     let interrupted = 0;
     let canceled = 0;

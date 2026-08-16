@@ -1,5 +1,5 @@
 import type { Agent } from "@deepseek-ai/dsh-agent";
-import type { CommandRuntime, CommandInvocation } from "@deepseek-ai/dsh-commands";
+import type { CommandService, CommandInvocation } from "@deepseek-ai/dsh-commands";
 import { ConfigStore } from "./config.js";
 import { EntityStore } from "./entity-store.js";
 import { ShadowEventLog } from "./event-log.js";
@@ -22,7 +22,7 @@ export class ShadowCommands {
     private readonly handlers: ShadowCommandsOptions,
   ) {}
 
-  register(commands: CommandRuntime): () => void {
+  register(commands: CommandService): () => void {
     return commands.register({
       name: "shadow",
       description: "Shadow Mind: /shadow status | probe <id> [tools] | list | clean | auto <on|off> | pause | resume",
