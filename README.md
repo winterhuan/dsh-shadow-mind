@@ -23,19 +23,23 @@ This package is a DSH port of the original [pi-shadow-mind](https://github.com/l
 
 ## Installation
 
-DSH plugins are loaded through a Cordis composition (profile or agent preset), not by the package consumer directly.
+DSH plugins are loaded through a Cordis composition (profile or agent preset).
 
-### 1. Install the package in the composition directory
-
-From your DSH profile or agent preset directory (the one that contains `cordis.yml` or the preset file), run:
+### 1. Install the package into a DSH profile
 
 ```bash
-npm install dsh-shadow-mind
+dsh plugin --profile web add dsh-shadow-mind
+```
+
+For local development, point to the package directory instead:
+
+```bash
+dsh plugin --profile web add /path/to/dsh-shadow-mind
 ```
 
 ### 2. Add the plugin row
 
-In the same `cordis.yml` (or `.cordis.yml` / agent preset file), add:
+In the profile's `cordis.yml` (or agent preset `.cordis.yml`), add:
 
 ```yaml
 - id: shadow-mind
