@@ -1,6 +1,6 @@
 {
   "name": "dsh-shadow-mind",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Parallel cognitive runtime for DeepSeek Harness, ported from pi-shadow-mind",
   "type": "module",
   "keywords": [

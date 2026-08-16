@@ -3,7 +3,6 @@ import type { Agent } from "@deepseek-ai/dsh-agent";
 import type { CommandService } from "@deepseek-ai/dsh-commands";
 import type { SubagentService } from "@deepseek-ai/dsh-subagent";
 import type { ToolRegistry } from "@deepseek-ai/dsh-tools";
-import type { ShadowConfig, RegistryDiagnostic, ShadowReport } from "./types.js";
 import { ConfigStore } from "./config.js";
 import { ShadowRegistry } from "./registry.js";
 import { EntityStore } from "./entity-store.js";
@@ -11,7 +10,6 @@ import { ShadowRunner } from "./shadow-runner.js";
 import { ShadowCommands } from "./commands.js";
 import { ManagementTools } from "./management-tools.js";
 import { ShadowEventLog } from "./event-log.js";
-import { ReportBatcher, formatReportBatch } from "./report-batcher.js";
 import { decideHeartbeat } from "./scheduler.js";
 import { SessionLifetime } from "./session-lifetime.js";
 import { createRandom } from "./random.js";
@@ -27,7 +25,6 @@ export class ShadowMindRuntime {
   private readonly entityStore: EntityStore;
   private readonly eventLog: ShadowEventLog;
   private readonly runner: ShadowRunner;
-  private readonly reportBatcher: ReportBatcher;
   private readonly commands: ShadowCommands;
   private readonly tools: ManagementTools;
   private readonly lifetime: SessionLifetime;
@@ -50,7 +47,6 @@ export class ShadowMindRuntime {
     this.entityStore = new EntityStore(this.registry, this.configStore.configPath);
     this.eventLog = new ShadowEventLog(50);
     this.runner = new ShadowRunner(ctx, this.eventLog);
-    this.reportBatcher = new ReportBatcher(0, (reports) => void this.deliverReports(reports));
     this.commands = new ShadowCommands(this.entityStore, this.configStore, this.eventLog, {
       onProbe: (agent, id, tools) => this.launchShadow(agent, id, tools),
       onList: () => this.listShadows(),
@@ -77,7 +73,8 @@ export class ShadowMindRuntime {
     if (error) {
       this.eventLog.record("config", { error, path: this.configStore.configPath });
     } else {
-      this.applyConfig(config);
+      // RNG is seeded once at session start, not on every heartbeat refresh.
+      this.random = createRandom(config.randomSeed);
     }
 
     const commandsService = this.ctx.get("commands");
@@ -108,7 +105,6 @@ export class ShadowMindRuntime {
 
   stop(): void {
     this.lifetime.deactivate();
-    this.reportBatcher.clear();
     for (const dispose of this.disposers) {
       try { dispose(); } catch { /* ignore */ }
     }
@@ -117,14 +113,8 @@ export class ShadowMindRuntime {
     this.eventLog.record("stopped", {});
   }
 
-  private applyConfig(config: ShadowConfig): void {
-    this.reportBatcher.setWindow(config.resultBatchWindowMs);
-    this.random = createRandom(config.randomSeed);
-  }
-
   private async refreshConfig(): Promise<void> {
-    const { config, error } = await this.configStore.reload();
-    if (config) this.applyConfig(config);
+    const { error } = await this.configStore.reload();
     if (error) this.eventLog.record("config", { error });
   }
 
@@ -164,7 +154,7 @@ export class ShadowMindRuntime {
 
     const decision = decideHeartbeat({
       heartbeatProbability: config.heartbeatProbability,
-      availableSlots: config.maxParallelShadows,
+      availableSlots: Math.max(0, config.maxParallelShadows - this.runningChildren.size),
       shadows,
       activeShadowIds: this.activeShadowIds,
       mainModelId,
@@ -252,11 +242,5 @@ export class ShadowMindRuntime {
 
   private status(): string {
     return `shadow-mind ${this.paused ? "PAUSED" : "active"} | epoch=${this.epoch} | active=${this.runningChildren.size} | events=${this.eventLog.length}`;
-  }
-
-  private async deliverReports(reports: ShadowReport[]): Promise<void> {
-    // DSH already delivers each shadow's closing message as a native notice.
-    // This batcher is kept for grouping custom reports if we ever emit them manually.
-    this.eventLog.record("report:batch", { count: reports.length, text: formatReportBatch(reports) });
   }
 }
