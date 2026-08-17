@@ -45,7 +45,7 @@ dsh plugin --profile web add /path/to/dsh-shadow-mind
 
 The profile stores the local package as a path dependency; rerun `npm run build` after source changes, then restart DSH.
 
-The current repository version is `0.1.6`. Before publishing that version, installing by package name resolves the latest published npm version instead; use the local-directory procedure above to test the current checkout.
+The current repository version is `0.1.6`. Installing by package name resolves the latest published npm version; to test an unpublished checkout, use the local-directory procedure above.
 
 The package ships a `cordis.patch.yml`. The profile loader reads the package's `dsh.bundle.patch` manifest and applies it automatically; no manual profile `cordis.patch.yml` editing is needed.
 
