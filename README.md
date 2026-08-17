@@ -2,9 +2,15 @@
 
 Parallel cognitive runtime for [DeepSeek Harness](https://github.com/deepseek-ai/dsh) (DSH / Cordis).
 
-The plugin runs multiple "Shadow Mind" agents beside the main agent to provide independent reviews, fact-checking, and parallel cognitive work. After each main-agent turn, a heartbeat scheduler randomly activates configured shadows, each with its own responsibility, tool allowlist, and run timeout.
+This project is a DSH plugin implementation of [pi-shadow-mind](https://github.com/liuzhengdongfortest/pi-shadow-mind). The plugin runs multiple "Shadow Mind" agents beside the main agent to provide independent reviews, fact-checking, and parallel cognitive work: after each main-agent turn, a heartbeat scheduler randomly activates configured shadows, each with its own responsibility, tool allowlist, and run timeout.
 
 > **Status**: functional prototype. Core heartbeat scheduling, restricted-tool shadow agents, per-run timeouts, lifecycle cleanup, and management tools work end-to-end. See [Known Limitations](#known-limitations) below.
+
+## Relation to pi-shadow-mind
+
+- Original project: https://github.com/liuzhengdongfortest/pi-shadow-mind
+- This repository is a DSH plugin (dsh-plugin) implementation of pi-shadow-mind: the shadow-mind concepts are reimplemented on the DSH/Cordis runtime as an independent package — not a fork, and not a line-by-line translation.
+- DSH uses different primitives (continuable subagents, native background notices, and the Cordis plugin model), so the implementation adapts the original design to them.
 
 ## Features
 
