@@ -64,7 +64,6 @@ export class ShadowMindRuntime {
     this.runner = new ShadowRunner(ctx, this.eventLog);
     this.commands = new ShadowCommands(this.entityStore, this.configStore, this.eventLog, {
       onProbe: (agent, id, tools) => this.launchShadow(agent, id, tools),
-      onListAgents: () => this.listAgents(),
       onList: () => this.listShadows(),
       onClean: (agent) => this.cancelChildren(agent, "shadow-clean"),
       onAuto: (enabled) => this.setAuto(enabled),
@@ -346,22 +345,6 @@ export class ShadowMindRuntime {
     const lines = shadows.length
       ? shadows.map((s) => `${s.enabled ? "✓" : "✗"} ${s.id} (${s.name}) p=${s.activationProbability} tools=[${s.tools.join(",") || "default"}]`)
       : ["No shadow definitions found."];
-    for (const d of diagnostics) lines.push(`! ${d.filePath}: ${d.message}`);
-    return lines.join("\n");
-  }
-
-  /** List the shadow agents defined under the registry directory. */
-  private async listAgents(): Promise<string> {
-    const { shadows, diagnostics } = await this.registry.load();
-    const lines = [
-      `shadow agents (in ${this.registry.directory}/):`,
-      ...(shadows.length
-        ? shadows.map((s) => {
-            const model = s.runWithModel ?? "(main model)";
-            return `- ${s.enabled ? "✓" : "✗"} ${s.id} (${s.name}) p=${s.activationProbability} model=${model} tools=[${s.tools.join(",") || "default"}]`;
-          })
-        : ["- (none)"]),
-    ];
     for (const d of diagnostics) lines.push(`! ${d.filePath}: ${d.message}`);
     return lines.join("\n");
   }

@@ -7,7 +7,6 @@ type Handler = (invocation: CommandInvocation) => Promise<{ kind: string; text: 
 function makeCommand() {
   const handlers = {
     onProbe: vi.fn(async () => "probe-result"),
-    onListAgents: vi.fn(async () => "agents-result"),
     onList: vi.fn(async () => "list-result"),
     onClean: vi.fn(() => "clean-result"),
     onAuto: vi.fn(() => "auto-result"),
@@ -30,14 +29,6 @@ function invocation(rawInput: string): CommandInvocation {
 }
 
 describe("ShadowCommands probe routing", () => {
-  it("routes `probe agents` to onListAgents", async () => {
-    const { handler, handlers } = makeCommand();
-    const result = await handler()!(invocation("probe agents"));
-    expect(handlers.onListAgents).toHaveBeenCalledOnce();
-    expect(handlers.onProbe).not.toHaveBeenCalled();
-    expect(result).toEqual({ kind: "success", text: "agents-result" });
-  });
-
   it("routes `probe <id>` to onProbe with the shadow id", async () => {
     const { handler, handlers } = makeCommand();
     const result = await handler()!(invocation("probe reviewer"));
