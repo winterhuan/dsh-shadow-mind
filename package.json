@@ -1,7 +1,7 @@
 {
   "name": "@winterchenhuan/dsh-shadow-mind",
   "version": "0.1.6",
-  "description": "Parallel cognitive runtime for DeepSeek Harness, ported from pi-shadow-mind",
+  "description": "Parallel cognitive runtime for DeepSeek Harness: heartbeat-scheduled shadow agents that review, fact-check, and work alongside the main agent",
   "type": "module",
   "keywords": [
     "dsh",

@@ -2,15 +2,9 @@
 
 Parallel cognitive runtime for [DeepSeek Harness](https://github.com/deepseek-ai/dsh) (DSH / Cordis).
 
-This package is a DSH port of the original [pi-shadow-mind](https://github.com/liuzhengdongfortest/pi-shadow-mind) project, which runs multiple "Shadow Mind" agents beside a main agent to provide independent reviews, fact-checking, and parallel cognitive work.
+The plugin runs multiple "Shadow Mind" agents beside the main agent to provide independent reviews, fact-checking, and parallel cognitive work. After each main-agent turn, a heartbeat scheduler randomly activates configured shadows, each with its own responsibility, tool allowlist, and run timeout.
 
-> **Status**: functional prototype / early port. Core heartbeat scheduling, restricted-tool shadow agents, per-run timeouts, lifecycle cleanup, and management tools work end-to-end. Several advanced features from `pi-shadow-mind` are not yet fully migrated. See [Gaps vs pi-shadow-mind](#gaps-vs-pi-shadow-mind) below.
-
-## Relation to pi-shadow-mind
-
-- Original project: https://github.com/liuzhengdongfortest/pi-shadow-mind
-- This port adapts the same concepts to the DSH/Cordis runtime.
-- Because DSH uses different primitives (continuable subagents, native background notices, and the Cordis plugin model), the implementation is not a line-by-line translation.
+> **Status**: functional prototype. Core heartbeat scheduling, restricted-tool shadow agents, per-run timeouts, lifecycle cleanup, and management tools work end-to-end. See [Known Limitations](#known-limitations) below.
 
 ## Features
 
@@ -82,7 +76,7 @@ Example `config.json`:
 }
 ```
 
-The timeout and heartbeat fields are active. `headless_drain_timeout_seconds`, `result_batch_window_ms`, and `default_thinking_level` are accepted for configuration compatibility but are not active in this port yet; see [Gaps vs pi-shadow-mind](#gaps-vs-pi-shadow-mind).
+The timeout and heartbeat fields are active. `headless_drain_timeout_seconds`, `result_batch_window_ms`, and `default_thinking_level` are accepted for configuration compatibility but are not active yet; see [Known Limitations](#known-limitations).
 
 Example shadow definition `grounded-reviewer.md`:
 
@@ -143,15 +137,15 @@ These are registered as model-callable tools:
 - `read_shadow_config`
 - `write_shadow_config`
 
-## Gaps vs pi-shadow-mind
+## Known Limitations
 
-The following features from the original `pi-shadow-mind` are not yet fully migrated:
+The following areas are not fully implemented yet:
 
-| Feature | Status |
+| Area | Status |
 |---|---|
-| Independent Shadow AgentSession | **Partial**: DSH continuable subagents are used instead of a separate Pi AgentSession. |
+| Independent Shadow AgentSession | **Partial**: DSH continuable subagents are used instead of a separate agent session. |
 | `report_to_main` tool | **Missing**: DSH native background notices are used instead. Report batching and `steer`/`followUp` are not yet replicated. |
-| Tool allowlist resolution (`resolveShadowTools`) | **Simplified**: missing-tool reporting and `report_to_main` injection are not implemented. |
+| Tool allowlist resolution | **Simplified**: missing-tool reporting and `report_to_main` injection are not implemented. |
 | Per-shadow model auth check | **Missing**: `run_with_model` is passed as `agentOptions`, but auth validation is not performed. |
 | Per-shadow `timeout_seconds` | **Enforced**: each run is bounded by `timeout_seconds` or `default_shadow_timeout_seconds`; expired runs are interrupted and their slots released. |
 | Per-shadow `thinking_level` | **Not applied**: DSH uses reasoning effort, which is not yet mapped. |
@@ -160,7 +154,7 @@ The following features from the original `pi-shadow-mind` are not yet fully migr
 | Debug session logs | **Not needed**: shadow runs are DSH continuable subagents, and DSH Web already shows their execution (trajectory, tool calls, results) live. The `debug` frontmatter field was removed accordingly. |
 | Test suite | **Minimal**: vitest suite covers the pure scheduling, parsing, serialization, config, and drain logic; no harness integration tests yet. |
 
-See the original [DESIGN.md](DESIGN.md) for the full design (this is the original pi-shadow-mind design; it describes goals that are only partially implemented in this DSH port).
+See [DESIGN.md](DESIGN.md) for the project's design goals; some of them are not fully implemented yet.
 
 ## Development
 
