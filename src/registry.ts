@@ -78,7 +78,6 @@ export function parseShadowMarkdown(source: string, filePath: string): ShadowDef
     id,
     name: stringValue(value.name, id, "name"),
     enabled: booleanValue(value.enabled, true, "enabled"),
-    debug: booleanValue(value.debug, false, "debug"),
     activationProbability: probabilityValue(value.activation_probability, 0.3, "activation_probability"),
     activeForModels: stringArray(value.active_for_models, ["*"], "active_for_models"),
     runWithModel: optionalString(value.run_with_model, "run_with_model"),

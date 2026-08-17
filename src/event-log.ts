@@ -9,7 +9,6 @@ export class ShadowEventLog {
     const event: RuntimeEvent = {
       at: new Date().toISOString(),
       kind,
-      epoch: Date.now(),
       data,
     };
     this.events.push(event);

@@ -2,7 +2,6 @@
 id: trajectory-boundary
 name: Trajectory identity boundary check
 enabled: true
-debug: true
 activation_probability: 1
 active_for_models:
   - deepseek/deepseek-v4-flash

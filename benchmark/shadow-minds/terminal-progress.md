@@ -2,7 +2,6 @@
 id: terminal-progress
 name: Terminal progress monitor
 enabled: true
-debug: true
 activation_probability: 0.3
 active_for_models:
   - deepseek/deepseek-v4-flash

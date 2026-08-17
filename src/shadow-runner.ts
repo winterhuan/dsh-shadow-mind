@@ -12,13 +12,20 @@ export interface ShadowLaunchResult {
   messageId: string;
 }
 
+export interface ShadowLaunchOptions {
+  /** Explicit tool allowlist; falls back to the shadow's or the default read tools. */
+  tools?: string[];
+  /** Plugin-level default shadow model (config `default_shadow_model`). */
+  defaultModel?: string;
+}
+
 export class ShadowRunner {
   constructor(
     private readonly ctx: Context,
     private readonly eventLog: ShadowEventLog,
   ) {}
 
-  async launch(agent: Agent, shadow: ShadowDefinition, tools?: string[]): Promise<ShadowLaunchResult> {
+  async launch(agent: Agent, shadow: ShadowDefinition, options?: ShadowLaunchOptions): Promise<ShadowLaunchResult> {
     const subagents = this.ctx.get("subagents") as SubagentService | undefined;
     if (!subagents) {
       throw new Error("subagents service unavailable");
@@ -30,8 +37,12 @@ export class ShadowRunner {
 
     const trajectory = await this.buildTrajectory(agent);
     const prompt = buildShadowPrompt(shadow, trajectory);
-    const allow = tools && tools.length ? tools : shadow.tools.length ? shadow.tools : [...DEFAULT_READ_TOOLS];
-    const agentOptions = this.resolveAgentOptions(agent, shadow);
+    const allow = options?.tools?.length
+      ? options.tools
+      : shadow.tools.length
+        ? shadow.tools
+        : [...DEFAULT_READ_TOOLS];
+    const agentOptions = this.resolveAgentOptions(agent, shadow, options?.defaultModel);
 
     const spec = {
       provider: providers[0],
@@ -50,8 +61,15 @@ export class ShadowRunner {
     return { childId: started.childId, messageId: started.messageId };
   }
 
-  private resolveAgentOptions(agent: Agent, shadow: ShadowDefinition): { provider?: string; model?: string } | undefined {
-    const modelId = shadow.runWithModel ?? (agent.options.provider ? `${agent.options.provider}/${agent.options.model}` : undefined);
+  /**
+   * Model selection: shadow's `run_with_model` → plugin `default_shadow_model`
+   * → the current main agent's model. Returns `undefined` when nothing
+   * resolvable exists (the child then inherits the harness default).
+   */
+  private resolveAgentOptions(agent: Agent, shadow: ShadowDefinition, defaultModel?: string): { provider?: string; model?: string } | undefined {
+    const modelId = shadow.runWithModel
+      ?? defaultModel
+      ?? (agent.options.provider ? `${agent.options.provider}/${agent.options.model}` : undefined);
     if (!modelId) return undefined;
     const separator = modelId.indexOf("/");
     if (separator <= 0 || separator === modelId.length - 1) {
@@ -84,8 +102,12 @@ export class ShadowRunner {
     }
     try {
       const surface = await sessionQuery.readSurface(agent.session.id);
-      if (!surface || !surface.surface) return "<empty-trajectory>";
-      return serializeTrajectory(surface.surface as any[]);
+      // `readSurface` resolves to `{ session, capturedThroughSeq, events }`;
+      // the sanitized trajectory is serialized from the surface events.
+      if (!surface || !Array.isArray(surface.events) || surface.events.length === 0) {
+        return "<empty-trajectory>";
+      }
+      return serializeTrajectory(surface.events);
     } catch (error) {
       this.eventLog.record("trajectory:error", { error: String(error) });
       return "<trajectory-unavailable>";
@@ -94,6 +116,7 @@ export class ShadowRunner {
 }
 
 export function buildShadowPrompt(shadow: ShadowDefinition, trajectory: string): string {
+  const body = trajectory.trim();
   return [
     `You are a Shadow Mind: ${shadow.name}.`,
     "",
@@ -104,8 +127,6 @@ export function buildShadowPrompt(shadow: ShadowDefinition, trajectory: string):
     "If you find nothing worth reporting, reply exactly NOT_RELEVANT and stop.",
     "Otherwise, reply with a concise, actionable report; it will be delivered to the main agent as a background notice.",
     "",
-    "<main-agent-trajectory>",
-    trajectory,
-    "</main-agent-trajectory>",
+    `<main-agent-trajectory>${body ? `\n${body}\n` : " (empty)"}</main-agent-trajectory>`,
   ].join("\n");
 }

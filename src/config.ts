@@ -96,10 +96,17 @@ export class ConfigStore {
     return readFile(this.configPath, "utf8");
   }
 
-  async writeConfig(patch: Partial<ShadowConfig>): Promise<void> {
-    const next = { ...this.lastGood, ...patch };
+  /**
+   * Merge a partial snake_case patch (as accepted by the write tool and
+   * config.json) onto the current effective config, validate the result, and
+   * persist it. An invalid merged value rejects without touching the file.
+   */
+  async writeConfig(patch: Record<string, unknown>): Promise<ShadowConfig> {
+    const base = JSON.parse(serializeConfig(this.lastGood)) as Record<string, unknown>;
+    const next = parseConfig({ ...base, ...patch });
     await writeFile(this.configPath, serializeConfig(next), "utf8");
     this.lastGood = next;
+    return next;
   }
 }
 

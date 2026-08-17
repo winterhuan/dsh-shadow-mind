@@ -15,7 +15,6 @@ export interface ShadowDefinition {
   id: string;
   name: string;
   enabled: boolean;
-  debug: boolean;
   activationProbability: number;
   activeForModels: string[];
   runWithModel?: string;
@@ -49,7 +48,6 @@ export interface ShadowReport {
 export interface RuntimeEvent {
   at: string;
   kind: string;
-  epoch: number;
   data?: Record<string, unknown>;
 }
 

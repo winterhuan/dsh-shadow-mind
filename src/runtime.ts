@@ -1,12 +1,13 @@
 import type { Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import type { CommandService } from "@deepseek-ai/dsh-commands";
-import type { SubagentService } from "@deepseek-ai/dsh-subagent";
+import type { SubagentService, SubagentRunEndInfo } from "@deepseek-ai/dsh-subagent";
 import type { ToolRegistry } from "@deepseek-ai/dsh-tools";
+import type { ShadowConfig } from "./types.js";
 import { ConfigStore } from "./config.js";
 import { ShadowRegistry } from "./registry.js";
 import { EntityStore } from "./entity-store.js";
-import { ShadowRunner } from "./shadow-runner.js";
+import { ShadowRunner, type ShadowLaunchResult } from "./shadow-runner.js";
 import { ShadowCommands } from "./commands.js";
 import { ManagementTools } from "./management-tools.js";
 import { ShadowEventLog } from "./event-log.js";
@@ -16,6 +17,17 @@ import { createRandom } from "./random.js";
 
 export interface ShadowMindRuntimeOptions {
   agentDir: string;
+}
+
+/** Bookkeeping for one accepted shadow child; removed on settle, cancel, or expiry. */
+interface ShadowRunRecord {
+  shadowId: string;
+  epoch: number;
+  startedAt: number;
+  timeoutMs: number;
+  timer?: ReturnType<typeof setTimeout>;
+  /** Root agent used as interrupt authority (`ancestor`) for this child. */
+  agent: Agent;
 }
 
 export class ShadowMindRuntime {
@@ -29,11 +41,14 @@ export class ShadowMindRuntime {
   private readonly tools: ManagementTools;
   private readonly lifetime: SessionLifetime;
 
-  private activeShadowIds = new Set<string>();
-  private runningChildren = new Map<string, number>();
+  /** Shadow ids with a live OR in-flight run; reserves the slot before launch. */
+  private readonly activeShadowIds = new Set<string>();
+  /** childId -> run bookkeeping; entries exist only between accept and settle. */
+  private readonly runningChildren = new Map<string, ShadowRunRecord>();
   private disposers: Array<() => void> = [];
   private started = false;
   private paused = false;
+  private autoEnabled = true;
   private epoch = 0;
   private random = createRandom();
 
@@ -50,16 +65,16 @@ export class ShadowMindRuntime {
     this.commands = new ShadowCommands(this.entityStore, this.configStore, this.eventLog, {
       onProbe: (agent, id, tools) => this.launchShadow(agent, id, tools),
       onList: () => this.listShadows(),
-      onClean: (agent) => this.cleanShadows(agent),
+      onClean: (agent) => this.cancelChildren(agent, "shadow-clean"),
       onAuto: (enabled) => this.setAuto(enabled),
-      onPause: () => this.setPaused(true),
+      onPause: (agent) => this.setPaused(true, agent),
       onResume: () => this.setPaused(false),
       onStatus: () => this.status(),
     });
-    this.tools = new ManagementTools(this.entityStore, this.configStore, this.eventLog, {
+    this.tools = new ManagementTools(ctx, this.entityStore, this.configStore, this.eventLog, {
       onList: () => this.listShadows(),
       onProbe: (agent, id, tools) => this.launchShadow(agent, id, tools),
-      onClean: (agent) => this.cleanShadows(agent),
+      onClean: (agent) => this.cancelChildren(agent, "shadow-clean"),
     });
     this.lifetime = new SessionLifetime();
   }
@@ -96,6 +111,7 @@ export class ShadowMindRuntime {
     if (subagents && agents) {
       this.disposers.push(this.attachHeartbeat(subagents as SubagentService, agents as any));
       this.disposers.push(this.attachInboxInserted(agents as any));
+      this.disposers.push(this.attachChildEnd());
     } else {
       this.eventLog.record("warning", { message: "subagents or agents service unavailable" });
     }
@@ -105,6 +121,11 @@ export class ShadowMindRuntime {
 
   stop(): void {
     this.lifetime.deactivate();
+    for (const record of this.runningChildren.values()) {
+      if (record.timer !== undefined) clearTimeout(record.timer);
+    }
+    this.runningChildren.clear();
+    this.activeShadowIds.clear();
     for (const dispose of this.disposers) {
       try { dispose(); } catch { /* ignore */ }
     }
@@ -120,6 +141,7 @@ export class ShadowMindRuntime {
 
   private async launchShadow(agent: Agent, shadowId?: string, tools?: string[]): Promise<string> {
     await this.refreshConfig();
+    const config = this.configStore.current;
     const { shadows } = await this.registry.load();
 
     let shadow = shadows.find((s) => s.id === shadowId);
@@ -136,15 +158,60 @@ export class ShadowMindRuntime {
       throw new Error(`shadow ${shadow.id} is already running`);
     }
 
-    const child = await this.runner.launch(agent, shadow, tools);
+    // Reserve the slot synchronously so a concurrent heartbeat cannot launch
+    // the same shadow, then release it again when the launch fails.
     this.activeShadowIds.add(shadow.id);
-    this.runningChildren.set(child.childId, this.epoch);
-    this.eventLog.record("shadow:launch", { shadowId: shadow.id, childId: child.childId, epoch: this.epoch });
+    const epochAtLaunch = this.epoch;
+    let child: ShadowLaunchResult;
+    try {
+      child = await this.runner.launch(agent, shadow, { tools, defaultModel: config.defaultShadowModel });
+    } catch (error) {
+      this.activeShadowIds.delete(shadow.id);
+      throw error;
+    }
+
+    if (epochAtLaunch !== this.epoch) {
+      // The user moved to a new epoch while the child was starting: it belongs
+      // to a stale epoch and must not keep running.
+      this.activeShadowIds.delete(shadow.id);
+      this.interruptChild(agent, child.childId, "new-epoch-race");
+      this.eventLog.record("shadow:discard", { shadowId: shadow.id, childId: child.childId, epoch: this.epoch });
+      return child.childId;
+    }
+
+    const timeoutMs = this.timeoutFor(shadow, config);
+    const record: ShadowRunRecord = {
+      shadowId: shadow.id,
+      epoch: epochAtLaunch,
+      startedAt: Date.now(),
+      timeoutMs,
+      agent,
+    };
+    if (timeoutMs > 0) {
+      record.timer = setTimeout(() => {
+        void this.expireRun(child.childId);
+      }, timeoutMs);
+    }
+    this.runningChildren.set(child.childId, record);
+    this.eventLog.record("shadow:launch", { shadowId: shadow.id, childId: child.childId, epoch: epochAtLaunch, timeoutMs });
     return child.childId;
   }
 
+  private async expireRun(childId: string): Promise<void> {
+    const record = this.runningChildren.get(childId);
+    if (!record) return;
+    this.eventLog.record("shadow:timeout", { childId, shadowId: record.shadowId, timeoutMs: record.timeoutMs });
+    this.cancelChild(record, childId, "shadow-timeout");
+  }
+
+  /** {@link timeout_seconds} per shadow, else the config default, in milliseconds. */
+  private timeoutFor(shadow: { timeoutSeconds?: number }, config: ShadowConfig): number {
+    const seconds = shadow.timeoutSeconds ?? config.defaultShadowTimeoutSeconds;
+    return seconds > 0 ? seconds * 1000 : 0;
+  }
+
   private async doHeartbeat(agent: Agent, mainModelId: string): Promise<void> {
-    if (this.paused) return;
+    if (this.paused || !this.autoEnabled) return;
     await this.refreshConfig();
     const config = this.configStore.current;
     const { shadows, diagnostics } = await this.registry.load();
@@ -154,7 +221,7 @@ export class ShadowMindRuntime {
 
     const decision = decideHeartbeat({
       heartbeatProbability: config.heartbeatProbability,
-      availableSlots: Math.max(0, config.maxParallelShadows - this.runningChildren.size),
+      availableSlots: Math.max(0, config.maxParallelShadows - this.activeShadowIds.size),
       shadows,
       activeShadowIds: this.activeShadowIds,
       mainModelId,
@@ -175,54 +242,68 @@ export class ShadowMindRuntime {
       if (!this.lifetime.isActive) return;
       const roots = agents.roots() as Agent[];
       if (!roots || roots.indexOf(payload.agent) < 0) return;
-      const mainModelId = (payload.agent as any).modelId ?? "*";
+      const options = payload.agent.options;
+      const mainModelId = options.provider && options.model ? `${options.provider}/${options.model}` : "*";
       void this.doHeartbeat(payload.agent, mainModelId);
     };
     return this.ctx.on("agent/turn-stopping", onTurnStopping);
   }
 
-  private setAuto(enabled: boolean): string {
-    this.eventLog.record("auto", { enabled });
-    // Heartbeat activation probability is the on/off switch for auto mode.
-    // In a fuller implementation this toggles a flag; here we just record it.
-    return `auto mode ${enabled ? "ON" : "OFF"}`;
+  /** Release bookkeeping when a child settles through any path (completed, aborted, error). */
+  private attachChildEnd(): () => void {
+    return this.ctx.on("subagent/end", (info: SubagentRunEndInfo) => {
+      if (!this.lifetime.isActive) return;
+      this.finishRun(String(info.id), { stopReason: info.stopReason });
+    });
   }
 
-  setPaused(paused: boolean): string {
-    this.paused = paused;
-    this.eventLog.record("paused", { paused });
-    return paused ? "shadow-mind paused" : "shadow-mind resumed";
+  private finishRun(childId: string, detail: { stopReason: string }): void {
+    const record = this.runningChildren.get(childId);
+    if (!record) return;
+    if (record.timer !== undefined) clearTimeout(record.timer);
+    this.runningChildren.delete(childId);
+    this.activeShadowIds.delete(record.shadowId);
+    this.eventLog.record("shadow:end", { childId, shadowId: record.shadowId, ...detail });
   }
 
-  isPaused(): boolean {
-    return this.paused;
+  private interruptChild(agent: Agent, childId: string, cause: string): boolean {
+    const subagents = this.ctx.get("subagents") as SubagentService | undefined;
+    if (!subagents) return false;
+    try {
+      subagents.interrupt(childId as any, { kind: "ancestor", agent });
+      this.eventLog.record("shadow:interrupt", { childId, cause });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
-  private async listShadows(): Promise<string> {
-    const { shadows } = await this.registry.load();
-    if (!shadows.length) return "No shadow definitions found.";
-    return shadows.map((s) => `${s.enabled ? "✓" : "✗"} ${s.id} (${s.name}) p=${s.activationProbability} tools=[${s.tools.join(",") || "default"}]`).join("\n");
-  }
-
-  private async cleanShadows(agent: Agent): Promise<string> {
-    return this.cancelChildren(agent, "shadow-clean");
+  private cancelChild(record: ShadowRunRecord, childId: string, cause: string): void {
+    if (record.timer !== undefined) clearTimeout(record.timer);
+    this.runningChildren.delete(childId);
+    this.activeShadowIds.delete(record.shadowId);
+    const agents = this.ctx.get("agents") as { get(id: string): Agent | undefined } | undefined;
+    let interrupted = false;
+    let canceled = false;
+    interrupted = this.interruptChild(record.agent, childId, cause);
+    if (agents) {
+      const child = agents.get(childId);
+      if (child) {
+        try { (child as any).cancel(cause, { keepInbox: false }); canceled = true; } catch { /* ignore */ }
+      }
+    }
+    this.eventLog.record("shadow:cancel", { childId, shadowId: record.shadowId, cause, interrupted, canceled });
   }
 
   private cancelChildren(agent: Agent, cause: string): string {
-    const subagents = this.ctx.get("subagents") as SubagentService | undefined;
-    const agents = this.ctx.get("agents") as { get(id: string): Agent | undefined } | undefined;
-    let interrupted = 0;
-    let canceled = 0;
-    for (const childId of [...this.runningChildren.keys()]) {
-      if (subagents) { try { subagents.interrupt(childId as any, { kind: "ancestor", agent }); interrupted++; } catch { /* ignore */ } }
-      if (agents) {
-        const child = agents.get(childId);
-        if (child) { try { (child as any).cancel(cause, { keepInbox: false }); canceled++; } catch { /* ignore */ } }
-      }
+    const records = [...this.runningChildren.entries()];
+    for (const [childId, record] of records) {
+      this.cancelChild(record, childId, cause);
     }
+    // Release reservations that never produced an accepted child (in-flight
+    // launches); a child that still completes is discarded by the epoch guard.
     this.activeShadowIds.clear();
-    this.runningChildren.clear();
-    return `cleaned running shadows (interrupt=${interrupted}, cancel=${canceled})`;
+    return `cleaned running shadows (${records.length})`;
   }
 
   private attachInboxInserted(agents: any): () => void {
@@ -240,7 +321,43 @@ export class ShadowMindRuntime {
     return this.ctx.on("agent/inbox/inserted", onInboxInserted);
   }
 
-  private status(): string {
-    return `shadow-mind ${this.paused ? "PAUSED" : "active"} | epoch=${this.epoch} | active=${this.runningChildren.size} | events=${this.eventLog.length}`;
+  private setAuto(enabled: boolean): string {
+    this.autoEnabled = enabled;
+    this.eventLog.record("auto", { enabled });
+    return `auto mode ${enabled ? "ON" : "OFF"}`;
+  }
+
+  setPaused(paused: boolean, agent?: Agent): string {
+    this.paused = paused;
+    this.eventLog.record("paused", { paused, epoch: this.epoch });
+    if (paused && agent) {
+      this.cancelChildren(agent, "shadow-pause");
+    }
+    return paused ? "shadow-mind paused" : "shadow-mind resumed";
+  }
+
+  isPaused(): boolean {
+    return this.paused;
+  }
+
+  private async listShadows(): Promise<string> {
+    const { shadows, diagnostics } = await this.registry.load();
+    const lines = shadows.length
+      ? shadows.map((s) => `${s.enabled ? "✓" : "✗"} ${s.id} (${s.name}) p=${s.activationProbability} tools=[${s.tools.join(",") || "default"}]`)
+      : ["No shadow definitions found."];
+    for (const d of diagnostics) lines.push(`! ${d.filePath}: ${d.message}`);
+    return lines.join("\n");
+  }
+
+  private async status(): Promise<string> {
+    const lines = [
+      `shadow-mind ${this.paused ? "PAUSED" : "active"} | auto=${this.autoEnabled ? "ON" : "OFF"} | epoch=${this.epoch} | active=${this.runningChildren.size} | events=${this.eventLog.length}`,
+    ];
+    if (this.configStore.error) {
+      lines.push(`config error: ${this.configStore.error}`);
+    }
+    const { diagnostics } = await this.registry.load();
+    for (const d of diagnostics) lines.push(`! ${d.filePath}: ${d.message}`);
+    return lines.join("\n");
   }
 }

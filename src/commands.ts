@@ -7,11 +7,11 @@ import { ShadowEventLog } from "./event-log.js";
 export interface ShadowCommandsOptions {
   onProbe: (agent: Agent, id?: string, tools?: string[]) => Promise<string>;
   onList: () => Promise<string>;
-  onClean: (agent: Agent) => Promise<string>;
+  onClean: (agent: Agent) => Promise<string> | string;
   onAuto: (enabled: boolean) => string;
-  onPause: () => string;
+  onPause: (agent: Agent) => string;
   onResume: () => string;
-  onStatus: () => string;
+  onStatus: () => Promise<string> | string;
 }
 
 export class ShadowCommands {
@@ -35,7 +35,7 @@ export class ShadowCommands {
         try {
           switch (sub) {
             case "status":
-              return { kind: "success", text: this.handlers.onStatus() };
+              return { kind: "success", text: await this.handlers.onStatus() };
             case "probe": {
               const probeParts = rest.trim().split(/\s+/);
               const id = probeParts[0] || undefined;
@@ -50,11 +50,11 @@ export class ShadowCommands {
             case "auto":
               return { kind: "success", text: this.handlers.onAuto(rest.trim().toLowerCase() === "on") };
             case "pause":
-              return { kind: "success", text: this.handlers.onPause() };
+              return { kind: "success", text: this.handlers.onPause(invocation.agent) };
             case "resume":
               return { kind: "success", text: this.handlers.onResume() };
             default:
-              return { kind: "success", text: "Usage: /shadow status | probe <id> [tools] | list | clean | auto <on|off> | pause | resume\n" + this.handlers.onStatus() };
+              return { kind: "success", text: "Usage: /shadow status | probe <id> [tools] | list | clean | auto <on|off> | pause | resume\n" + await this.handlers.onStatus() };
           }
         } catch (error) {
           return { kind: "error", text: String(error) };

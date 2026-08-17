@@ -2,7 +2,6 @@
 id: pelican-structure-review
 name: Pelican bicycle structure reviewer
 enabled: true
-debug: true
 activation_probability: 1
 active_for_models:
   - deepseek/deepseek-v4-flash

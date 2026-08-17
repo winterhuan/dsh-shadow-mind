@@ -59,7 +59,6 @@ export function serializeShadow(shadow: ShadowDraft): string {
     id: shadow.id,
     ...(shadow.name !== undefined ? { name: shadow.name } : {}),
     enabled: shadow.enabled ?? true,
-    debug: shadow.debug ?? false,
     activation_probability: shadow.activationProbability ?? 0.3,
     active_for_models: shadow.activeForModels ?? ["*"],
     ...(shadow.runWithModel ? { run_with_model: shadow.runWithModel } : {}),

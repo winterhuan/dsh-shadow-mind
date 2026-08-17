@@ -4,18 +4,28 @@ interface ToolResultLike { toolName?: string; content?: unknown; isError?: boole
 type Summarizer = (result: ToolResultLike) => string;
 
 const summarizers = new Map<string, Summarizer>([
-  ["read", (result) => summarizeLines(result, "read")],
+  ["read", (result) => summarizeLines(result, "lines")],
   ["grep", (result) => summarizeLines(result, "matches")],
   ["find", (result) => summarizeLines(result, "paths")],
   ["ls", (result) => summarizeLines(result, "entries")],
 ]);
 
 export function summarizeToolCall(name: string, args: unknown): string {
-  if (typeof args !== "object" || args === null) {
+  // DSH tool-call blocks carry `arguments` as the raw JSON string as produced
+  // by the model; tolerate both that and an already-parsed object.
+  let value = args;
+  if (typeof args === "string") {
+    try {
+      value = JSON.parse(args);
+    } catch {
+      value = undefined;
+    }
+  }
+  if (typeof value !== "object" || value === null) {
     return `${name}()`;
   }
-  const value = args as Record<string, unknown>;
-  const keys = Object.keys(value);
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record);
   if (!keys.length) return `${name}()`;
   // Redact argument values by default; keep keys to give the shadow a sense of what was attempted.
   const redacted = keys.map((key) => `${key}: [redacted]`).join(", ");
