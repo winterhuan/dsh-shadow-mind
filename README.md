@@ -115,6 +115,13 @@ dsh web
 
 In the Web UI, continue using the main agent. Shadow activations happen after main-agent turns according to the configured probability. Use `/shadow status` first to confirm the plugin loaded and to see registry/config diagnostics.
 
+Typical flow:
+
+1. `/shadow status` — confirm the plugin loaded and see the current state.
+2. `/shadow list` — see which shadows are defined and enabled.
+3. `/shadow probe grounded-reviewer` — manually run one shadow once to check it works.
+4. Shadows then activate automatically after main-agent turns (heartbeat), as long as auto mode is ON.
+
 ## Commands
 
 Use the single `/shadow` umbrella command:
@@ -128,6 +135,15 @@ Use the single `/shadow` umbrella command:
 /shadow pause
 /shadow resume
 ```
+
+| Command | Purpose |
+|---|---|
+| `/shadow status` | Show the current state: active/paused, auto mode, epoch, running shadow count, event count, plus config/registry diagnostics. |
+| `/shadow probe <id> [tools]` | Manually run one shadow once without waiting for a heartbeat. `<id>` selects the shadow (omit it to pick a random enabled one). Optional comma-separated `tools` overrides that shadow's tool allowlist. |
+| `/shadow list` | List all shadow definitions: enabled/disabled, activation probability, and tool allowlist. |
+| `/shadow clean` | Abort all currently running shadows and release their slots. |
+| `/shadow auto <on\|off>` | Enable/disable heartbeat activation. `off` stops random activations; already-running shadows are not affected. |
+| `/shadow pause` / `/shadow resume` | Pause/resume the whole shadow system for the current session. Pausing also aborts running shadows. A new user message (new epoch) also stops shadows left over from the previous epoch. |
 
 ## Management Tools
 
