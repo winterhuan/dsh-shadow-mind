@@ -1,14 +1,14 @@
-# Shadow Mind：DSH 并行认知运行时设计
+# Shadow Mind：Pi 并行认知运行时设计
 
 ## 1. 目标
 
-Shadow Mind 是一个运行在 DSH 主 Agent 旁边的通用并行认知运行时。
+Shadow Mind 是一个运行在 Pi 主 Agent 旁边的通用并行认知运行时。
 
 主 Agent 继续正常推理和执行任务；插件以 heartbeat 随机唤醒多个 Shadow Mind，让它们沿各自的职责独立观察或推进任务。Shadow 既可以检查 Main，也可以承担文档维护等并行工作，并在有结果需要同步时向主 Agent 注入消息。
 
 第一版要验证的核心假设是：
 
-> 不引入复杂的智能调度，仅通过随机唤醒多个具有持久职责的异步 Agent，能否让一个 DSH Session 稳定推进多条相互补充的认知与任务线。
+> 不引入复杂的智能调度，仅通过随机唤醒多个具有持久职责的异步 Agent，能否让一个 Pi Session 稳定推进多条相互补充的认知与任务线。
 
 纠错、事实核查和约束检查只是典型场景；Shadow 也可以探索替代路线、维护文档或承担其他长期职责。“多核”和“章鱼”可用于解释和后续产品表达，但不是运行时的技术定义。
 
@@ -52,7 +52,7 @@ Shadow 的 Markdown 定义持久存在，但运行实例不保留长期记忆。
 第一版统一从全局目录加载定义：
 
 ```text
-~/.dsh/agent/shadow-minds/
+~/.pi/agent/shadow-minds/
 ├── config.json
 ├── grounded-reviewer.md
 ├── requirement-keeper.md
@@ -109,11 +109,11 @@ active_for_models:
 | `run_with_model` | Shadow 自己使用的模型；省略时使用插件默认模型 |
 | `thinking_level` | Shadow 使用的 thinking level；省略时使用插件默认值，再回退到 Main 会话当前生效等级 |
 | `timeout_seconds` | Shadow 单次运行超时；省略时使用插件默认超时 |
-| `tools` | 在 DSH 默认只读工具集（`readOnlyTools`）之上追加的工具白名单；默认 `[]` |
+| `tools` | 在 Pi SDK `readOnlyTools` 之上追加的工具白名单；默认 `[]` |
 
 `name` 只用于 `shadow-report` 和状态界面展示，不参与身份判断；省略时回退到最终解析出的 `id`。Markdown 正文就是 Shadow 的认知定义、长期职责和行为要求。
 
-`active_for_models` 绑定的是被观察的 Main 模型，`run_with_model` 则指定 Shadow 自己运行时使用的模型。匹配前由 DSH 将 Main 的别名或简写解析为完整 `provider/model-id`；第一版只支持该完整 ID 和精确值 `"*"`，不引入其他通配、正则、标签或复杂条件。模型选择优先级为：Shadow 的 `run_with_model` → 插件的 `default_shadow_model` → 激活时的当前 Main 模型。
+`active_for_models` 绑定的是被观察的 Main 模型，`run_with_model` 则指定 Shadow 自己运行时使用的模型。匹配前由 Pi 将 Main 的别名或简写解析为完整 `provider/model-id`；第一版只支持该完整 ID 和精确值 `"*"`，不引入其他通配、正则、标签或复杂条件。模型选择优先级为：Shadow 的 `run_with_model` → 插件的 `default_shadow_model` → 激活时的当前 Main 模型。
 
 如果显式配置的 `run_with_model` 当前不存在、未认证或不可用，本次激活失败并写入轻量运行事件，不自动换用其他模型。只有省略该字段时才使用插件默认 Shadow 模型。
 
@@ -122,7 +122,7 @@ active_for_models:
 每个 Shadow 的最终工具集合由三部分组成：
 
 ```text
-DSH 默认只读工具（readOnlyTools）
+Pi SDK readOnlyTools
 + 当前可用的 tools 追加项
 + 内置 report_to_main
 ```
@@ -131,13 +131,13 @@ DSH 默认只读工具（readOnlyTools）
 
 `tools` 是在该集合之上追加的显式白名单，省略时视为 `[]`。例如 `tools: [write]` 会获得当前 registry 中的默认四个工具、`write` 和内置 `report_to_main`。
 
-DSH 的通用 `ToolDefinition` 没有可供插件查询的只读属性，因此自定义工具不会被自动归类或加入；编辑文件、执行 Shell 或其他能力也不会被隐式继承自 Main。配置的追加工具在当前 Session 不存在时，插件忽略该项、写入轻量运行事件，其余工具继续正常提供。
+Pi 的通用 `ToolDefinition` 没有可供插件查询的只读属性，因此自定义工具不会被自动归类或加入；编辑文件、执行 Shell 或其他能力也不会被隐式继承自 Main。配置的追加工具在当前 Session 不存在时，插件忽略该项、写入轻量运行事件，其余工具继续正常提供。
 
 `tools` 白名单本身就是用户对该 Shadow 的执行授权。列入白名单的写入、Shell 或其他工具可以由后台 Shadow 直接调用，插件不增加逐次确认层。
 
 ### 写入并发边界
 
-第一版不包装或替换 Main、DSH 内置工具及第三方插件工具，也不承诺文件级写入互斥。DSH 允许插件覆盖和新增工具，而任意工具可能产生无法预先声明的文件副作用；不完整的锁机制会形成错误的安全保证。
+第一版不包装或替换 Main、Pi 内置工具及第三方插件工具，也不承诺文件级写入互斥。Pi 允许插件覆盖和新增工具，而任意工具可能产生无法预先声明的文件副作用；不完整的锁机制会形成错误的安全保证。
 
 当用户把写入、Shell 或其他有副作用的工具加入 Shadow 白名单时，即表示接受它与 Main 或其他 Shadow 并发执行产生冲突的风险。可以在 Shadow Markdown 中约定职责范围，例如文档 Shadow 只维护 `docs/`，但这属于模型行为约束，不是运行时强制隔离。
 
@@ -165,13 +165,13 @@ report_to_main({ content: "..." })
 
 `/shadow` 打开统一状态面板，展示当前 Session 的暂停状态、有效与无效 Shadow、正在运行的实例、最近事件和实际生效配置；`/shadow status` 提供对应的摘要视图。第一版面板以观察为主，不内置完整 Markdown 编辑器。
 
-DSH 主界面常驻一个紧凑状态指示，例如 `🐙 2`，数字表示当前运行的 Shadow 实例数。产生报告、超时或错误时指示器短暂改变状态，不弹出逐次通知；详细信息统一进入 `/shadow` 面板。
+Pi 主界面常驻一个紧凑状态指示，例如 `🐙 2`，数字表示当前运行的 Shadow 实例数。产生报告、超时或错误时指示器短暂改变状态，不弹出逐次通知；详细信息统一进入 `/shadow` 面板。
 
-只有设置 `debug: true` 的 Shadow 才保存完整的临时 AgentSession 日志，存入 `~/.dsh/agent/shadow-minds/logs/<shadow-id>/`。
+只有设置 `debug: true` 的 Shadow 才保存完整的临时 AgentSession 日志，存入 `~/.pi/agent/shadow-minds/logs/<shadow-id>/`。
 
 每次 Shadow 激活对应一个独立日志文件。文件覆盖该次临时 AgentSession 从创建到结束的完整生命周期；沉默、上报、超时和中止都会正常收口并记录最终状态。因此目录中的文件数量可以直接反映 `debug` 开启期间该 Shadow 的激活次数。
 
-日志使用 DSH 原生 Session JSONL 格式，并在运行过程中增量写入。每个文件同时标记 Shadow ID、所属 epoch 和最终状态，以便复用 DSH 的会话查看能力并在异常退出时保留已有记录。
+日志使用 Pi 原生 Session JSONL 格式，并在运行过程中增量写入。每个文件同时标记 Shadow ID、所属 epoch 和最终状态，以便复用 Pi 的会话查看能力并在异常退出时保留已有记录。
 
 完整调试日志默认永久保留，不自动轮转或删除。任何日志清理都必须由用户显式执行，避免目录文件数失去累计激活次数的含义。
 
@@ -262,7 +262,7 @@ Main: 建议复用项目现有的 UserRole。
 
 上例就是运行时实际注入的纯文本轨迹。Shadow Markdown 不出现在轨迹或 system prompt 中，而是与公共协议和 kickoff 一起放在同一条用户消息的轨迹之后。
 
-运行时不复用 DSH 原生的 assistant tool call 与 tool result 消息角色。插件先按关联 ID 配对调用和结果，再将整个 Main 历史扁平化为普通文本；`调用 · 概述` 就是发送给 Shadow 模型的实际形式。这样历史工具调用只是一份只读记录，不会被模型误认为当前 Shadow loop 中尚待继续的原生调用。
+运行时不复用 Pi 原生的 assistant tool call 与 tool result 消息角色。插件先按关联 ID 配对调用和结果，再将整个 Main 历史扁平化为普通文本；`调用 · 概述` 就是发送给 Shadow 模型的实际形式。这样历史工具调用只是一份只读记录，不会被模型误认为当前 Shadow loop 中尚待继续的原生调用。
 
 结果概述只表达调用是否成功、结果规模和必要的状态信息，不携带完整正文。例如：
 
@@ -445,12 +445,12 @@ Shadow 的临时 AgentSession 不跨激活复用，也不写回记忆。
 - Shadow 独立使用工具进行检查；
 - 通过内置 `report_to_main` 工具显式提交介入内容；
 - `report_to_main` 调用后立即终止对应 Shadow Agent loop；
-- 为每个 Shadow 配置工具白名单，默认使用 DSH 的 `readOnlyTools`；白名单中的额外工具视为已授权；
+- 为每个 Shadow 配置工具白名单，默认使用 Pi 的 `readOnlyTools`；白名单中的额外工具视为已授权；
 - 提供插件级默认运行超时，并允许单个 Shadow 覆盖；
 - 记录轻量运行事件并提供 `/shadow status`；
 - 为 `debug: true` 的 Shadow 保存完整临时 Session 日志；
 - 每次 Shadow 激活使用一个独立日志文件，并记录最终状态；
-- 调试日志采用 DSH 原生 Session JSONL 并增量写入；
+- 调试日志采用 Pi 原生 Session JSONL 并增量写入；
 - 运行中使用 `steer`，Main 结束后使用 follow-up；
 - 在短聚合窗口内合并同期 Shadow 意见后一次性注入；
 - 使用可见的 `shadow-report` 自定义消息呈现聚合结果；
@@ -476,9 +476,9 @@ Shadow 的临时 AgentSession 不跨激活复用，也不写回记忆。
 使用同一组任务比较：
 
 ```text
-Single-core DSH
+Single-core Pi
 vs
-DSH + multiple Shadow Minds
+Pi + multiple Shadow Minds
 ```
 
 第一阶段重点观察：

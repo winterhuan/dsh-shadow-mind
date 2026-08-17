@@ -20,15 +20,15 @@
 
 # Release process
 
-发布目标是同时生成两个产物：用于 npm 发布的 `winterchenhuan-dsh-shadow-mind-<version>.tgz`，以及解压后可由 `pi install ./winterchenhuan-dsh-shadow-mind-<version>` 安装的 standalone ZIP。
+发布目标是同时生成两个产物：用于 npm 发布的 `winterchenhuan-dsh-shadow-mind-<version>.tgz`，以及解压后可由 `dsh plugin --profile <profile> add ./winterchenhuan-dsh-shadow-mind-<version>` 安装的 standalone ZIP。
 
 1. 发布前更新 `package.json` 版本，并运行 `npm install` 同步 lockfile。不要覆盖同版本的既有正式产物；代码有变化时应提升版本。
 2. 运行 `npm run verify`，要求类型检查及全部测试通过。
-3. 运行 `npm run build`，确认扩展入口为 `dist/index.js`，包内不分发 `src/` 和测试。构建必须把 `yaml` 等第三方运行时依赖打入入口 bundle；Pi 核心包与 `typebox` 保持 external。
+3. 运行 `npm run build`，确认扩展入口为 `dist/index.js`，包内不分发 `src/` 和测试。构建必须把 `yaml` 等第三方运行时依赖打入入口 bundle；`@deepseek-ai/*` 等 DSH 核心包保持 external。
 4. 运行 `npm pack --ignore-scripts --pack-destination release` 生成 `.tgz`。若未提前执行验证和构建，则改用普通 `npm pack`，由 `prepack` 自动完成。
 5. 制作 standalone ZIP：将 `.tgz` 解包至同名目录，再压缩整个同名目录。ZIP 内必须保留顶层包目录，且不得依赖接收方另行安装 `yaml` 等普通运行时依赖。
-6. 在隔离目录中通过 Pi `DefaultResourceLoader` 加载 standalone 包的 `dist/index.js`。冒烟检查必须设置 `noExtensions: true` 并仅通过 `additionalExtensionPaths` 加载待测入口，避免本机已配置的同名插件造成假冲突。
+6. 在隔离目录中冒烟检查待测入口：用 Node 直接 import standalone 包的 `dist/index.js`，确认默认导出为 Cordis 插件工厂且无加载错误；随后通过 `dsh plugin --profile <profile> add <path>` 注册并启动 DSH，确认可识别 `/shadow` 命令和全部管理工具。加载待测入口时避免本机已配置的同名插件造成假冲突。
 7. 确认加载无错误，且可识别 `/shadow` 和全部管理工具。随后为 `.tgz`、ZIP 生成 SHA-256，并写入 `release/SHA256SUMS.txt`。
-8. 交付时优先提供 standalone ZIP；`.tgz` 用于 npm 发布。说明 ZIP 的安装方式：解压后运行 `pi install ./winterchenhuan-dsh-shadow-mind-<version>`。
+8. 交付时优先提供 standalone ZIP；`.tgz` 用于 npm 发布。说明 ZIP 的安装方式：解压后运行 `dsh plugin --profile <profile> add ./winterchenhuan-dsh-shadow-mind-<version>`。
 
 清理或覆盖 `release/` 下的暂存目录和旧产物前，必须解析并核对目标的绝对路径确实位于当前项目的 `release/` 内，不得对工作区根目录使用递归删除。
