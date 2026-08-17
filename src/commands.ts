@@ -6,6 +6,7 @@ import { ShadowEventLog } from "./event-log.js";
 
 export interface ShadowCommandsOptions {
   onProbe: (agent: Agent, id?: string, tools?: string[]) => Promise<string>;
+  onListAgents: () => Promise<string> | string;
   onList: () => Promise<string>;
   onClean: (agent: Agent) => Promise<string> | string;
   onAuto: (enabled: boolean) => string;
@@ -25,8 +26,8 @@ export class ShadowCommands {
   register(commands: CommandService): () => void {
     return commands.register({
       name: "shadow",
-      description: "Shadow Mind: /shadow status | probe <id> [tools] | list | clean | auto <on|off> | pause | resume",
-      input: { hint: "status | probe <id> [tools] | list | clean | auto <on|off> | pause | resume" },
+      description: "Shadow Mind: /shadow status | probe <id|agents> [tools] | list | clean | auto <on|off> | pause | resume",
+      input: { hint: "status | probe <id|agents> [tools] | list | clean | auto <on|off> | pause | resume" },
       handler: async (invocation: CommandInvocation) => {
         const raw = invocation.rawInput.trim();
         const parts = raw.split(/\s+/);
@@ -38,7 +39,11 @@ export class ShadowCommands {
               return { kind: "success", text: await this.handlers.onStatus() };
             case "probe": {
               const probeParts = rest.trim().split(/\s+/);
-              const id = probeParts[0] || undefined;
+              const first = probeParts[0];
+              if (first === "agents") {
+                return { kind: "success", text: await this.handlers.onListAgents() };
+              }
+              const id = first || undefined;
               const tools = probeParts[1] ? probeParts[1].split(",") : undefined;
               const text = await this.handlers.onProbe(invocation.agent, id, tools);
               return { kind: "success", text };
@@ -54,7 +59,7 @@ export class ShadowCommands {
             case "resume":
               return { kind: "success", text: this.handlers.onResume() };
             default:
-              return { kind: "success", text: "Usage: /shadow status | probe <id> [tools] | list | clean | auto <on|off> | pause | resume\n" + await this.handlers.onStatus() };
+              return { kind: "success", text: "Usage: /shadow status | probe <id|agents> [tools] | list | clean | auto <on|off> | pause | resume\n" + await this.handlers.onStatus() };
           }
         } catch (error) {
           return { kind: "error", text: String(error) };

@@ -121,13 +121,15 @@ Use the single `/shadow` umbrella command:
 
 ```
 /shadow status
-/shadow probe <id> [tools]
+/shadow probe <id|agents> [tools]
 /shadow list
 /shadow clean
 /shadow auto <on|off>
 /shadow pause
 /shadow resume
 ```
+
+`/shadow probe agents` 列出 `$DSH_HOME/agent/shadow-minds/` 下定义的全部 shadow agents（含实际读取的目录路径、启用状态、激活概率、模型和工具白名单）。
 
 ## Management Tools
 
