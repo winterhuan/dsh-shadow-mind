@@ -60,3 +60,33 @@ export interface HeartbeatDecision {
   /** Shadow ids excluded because the same shadow is already running. */
   runningExcluded: string[];
 }
+
+/** Wire-serializable runtime snapshot served to the Web UI. */
+export interface ShadowMindSnapshot {
+  present: boolean;
+  paused: boolean;
+  autoEnabled: boolean;
+  epoch: number;
+  activeCount: number;
+  running: Array<{
+    childId: string;
+    shadowId: string;
+    startedAt: number;
+    timeoutMs: number;
+  }>;
+  eventCount: number;
+  recentEvents: RuntimeEvent[];
+  shadows: Array<{
+    id: string;
+    name: string;
+    enabled: boolean;
+    activationProbability: number;
+    tools: string[];
+  }>;
+  diagnostics: RegistryDiagnostic[];
+  configError: string | null;
+  heartbeatProbability: number;
+  maxParallelShadows: number;
+  defaultShadowTimeoutSeconds: number;
+  defaultShadowModel: string | null;
+}

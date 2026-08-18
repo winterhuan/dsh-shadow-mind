@@ -1,7 +1,7 @@
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import type { Context } from "@deepseek-ai/cordis";
 import type { ContentBlock } from "@deepseek-ai/dsh-llm";
-import type { SubagentService } from "@deepseek-ai/dsh-subagent";
+import type { SubagentRuntime } from "@deepseek-ai/dsh-subagent";
 import type { ShadowDefinition } from "./types.js";
 import { ShadowEventLog } from "./event-log.js";
 import { serializeTrajectory } from "./trajectory.js";
@@ -26,7 +26,7 @@ export class ShadowRunner {
   ) {}
 
   async launch(agent: Agent, shadow: ShadowDefinition, options?: ShadowLaunchOptions): Promise<ShadowLaunchResult> {
-    const subagents = this.ctx.get("subagents") as SubagentService | undefined;
+    const subagents = this.ctx.get("subagents") as SubagentRuntime | undefined;
     if (!subagents) {
       throw new Error("subagents service unavailable");
     }

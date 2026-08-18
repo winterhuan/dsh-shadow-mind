@@ -1,9 +1,9 @@
 import type { Context } from "@deepseek-ai/cordis";
 import type { Agent } from "@deepseek-ai/dsh-agent";
-import type { CommandService } from "@deepseek-ai/dsh-commands";
-import type { SubagentService, SubagentRunEndInfo } from "@deepseek-ai/dsh-subagent";
-import type { ToolRegistry } from "@deepseek-ai/dsh-tools";
-import type { ShadowConfig } from "./types.js";
+import type { CommandRuntime } from "@deepseek-ai/dsh-commands";
+import type { SubagentRuntime, SubagentRunEndInfo } from "@deepseek-ai/dsh-subagent";
+import type { ToolRuntime } from "@deepseek-ai/dsh-tools";
+import type { ShadowConfig, ShadowMindSnapshot } from "./types.js";
 import { ConfigStore } from "./config.js";
 import { ShadowRegistry } from "./registry.js";
 import { EntityStore } from "./entity-store.js";
@@ -94,14 +94,14 @@ export class ShadowMindRuntime {
 
     const commandsService = this.ctx.get("commands");
     if (commandsService) {
-      this.disposers.push(this.commands.register(commandsService as CommandService));
+      this.disposers.push(this.commands.register(commandsService as CommandRuntime));
     } else {
       this.eventLog.record("warning", { message: "commands service unavailable" });
     }
 
     const toolsService = this.ctx.get("tools");
     if (toolsService) {
-      this.disposers.push(this.tools.register(toolsService as ToolRegistry));
+      this.disposers.push(this.tools.register(toolsService as ToolRuntime));
     } else {
       this.eventLog.record("warning", { message: "tools service unavailable" });
     }
@@ -109,7 +109,7 @@ export class ShadowMindRuntime {
     const subagents = this.ctx.get("subagents");
     const agents = this.ctx.get("agents");
     if (subagents && agents) {
-      this.disposers.push(this.attachHeartbeat(subagents as SubagentService, agents as any));
+      this.disposers.push(this.attachHeartbeat(subagents as SubagentRuntime, agents as any));
       this.disposers.push(this.attachInboxInserted(agents as any));
       this.disposers.push(this.attachChildEnd());
     } else {
@@ -237,7 +237,7 @@ export class ShadowMindRuntime {
     }
   }
 
-  private attachHeartbeat(subagents: SubagentService, agents: any): () => void {
+  private attachHeartbeat(subagents: SubagentRuntime, agents: any): () => void {
     const onTurnStopping = (payload: { agent: Agent }) => {
       if (!this.lifetime.isActive) return;
       const roots = agents.roots() as Agent[];
@@ -267,7 +267,7 @@ export class ShadowMindRuntime {
   }
 
   private interruptChild(agent: Agent, childId: string, cause: string): boolean {
-    const subagents = this.ctx.get("subagents") as SubagentService | undefined;
+    const subagents = this.ctx.get("subagents") as SubagentRuntime | undefined;
     if (!subagents) return false;
     try {
       subagents.interrupt(childId as any, { kind: "ancestor", agent });
@@ -359,5 +359,39 @@ export class ShadowMindRuntime {
     const { diagnostics } = await this.registry.load();
     for (const d of diagnostics) lines.push(`! ${d.filePath}: ${d.message}`);
     return lines.join("\n");
+  }
+
+  /** Produce a wire-serializable snapshot for the Web UI. */
+  async snapshot(): Promise<ShadowMindSnapshot> {
+    const { shadows, diagnostics } = await this.registry.load();
+    const config = this.configStore.current;
+    return {
+      present: this.started,
+      paused: this.paused,
+      autoEnabled: this.autoEnabled,
+      epoch: this.epoch,
+      activeCount: this.runningChildren.size,
+      running: [...this.runningChildren.entries()].map(([childId, record]) => ({
+        childId,
+        shadowId: record.shadowId,
+        startedAt: record.startedAt,
+        timeoutMs: record.timeoutMs,
+      })),
+      eventCount: this.eventLog.length,
+      recentEvents: [...this.eventLog.recent(20)],
+      shadows: shadows.map((s) => ({
+        id: s.id,
+        name: s.name,
+        enabled: s.enabled,
+        activationProbability: s.activationProbability,
+        tools: s.tools,
+      })),
+      diagnostics: [...diagnostics],
+      configError: this.configStore.error ?? null,
+      heartbeatProbability: config.heartbeatProbability,
+      maxParallelShadows: config.maxParallelShadows,
+      defaultShadowTimeoutSeconds: config.defaultShadowTimeoutSeconds,
+      defaultShadowModel: config.defaultShadowModel ?? null,
+    };
   }
 }
