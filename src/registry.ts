@@ -1,17 +1,18 @@
 import { mkdir, readFile, readdir, stat } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
 import YAML from "yaml";
+import { ID_PATTERN, SHADOW_MIND_DIR } from "./constants.js";
 import type { RegistryDiagnostic, RegistrySnapshot, ShadowDefinition } from "./types.js";
 import { inRange, isFiniteNumber, isNonEmptyString, isStringArray } from "./validation.js";
 
-const ID_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
+const ID_PATTERN_RE = new RegExp(ID_PATTERN);
 
 export class ShadowRegistry {
   readonly directory: string;
   private readonly cache = new Map<string, { mtimeMs: number; shadow?: ShadowDefinition; error?: string }>();
 
   constructor(agentDir: string) {
-    this.directory = join(agentDir, "shadow-minds");
+    this.directory = join(agentDir, SHADOW_MIND_DIR);
   }
 
   async initialize(): Promise<void> {
@@ -71,7 +72,7 @@ export function parseShadowMarkdown(source: string, filePath: string): ShadowDef
   const value = meta as Record<string, unknown>;
   const fallbackId = basename(filePath, extname(filePath));
   const id = stringValue(value.id, fallbackId, "id");
-  if (!ID_PATTERN.test(id)) throw new Error("id must match [a-z0-9][a-z0-9_-]*");
+  if (!ID_PATTERN_RE.test(id)) throw new Error("id must match [a-z0-9][a-z0-9_-]*");
   const prompt = match[2].trim();
   if (!prompt) throw new Error("shadow prompt body is empty");
   return {

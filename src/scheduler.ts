@@ -47,6 +47,16 @@ export function matchesModel(shadow: ShadowDefinition, fullModelId: string): boo
   return shadow.activeForModels.includes("*") || shadow.activeForModels.includes(fullModelId);
 }
 
+/**
+ * Heartbeat should only be evaluated when the turn produced new evidence.
+ * A turn with no tool activity is unlikely to give a shadow anything to
+ * report, and it also avoids a shadow's own report (which is itself a tool
+ * call) from recursively scheduling more shadows.
+ */
+export function shouldEvaluateHeartbeat(toolResults: number): boolean {
+  return toolResults > 0;
+}
+
 function sample<T>(values: readonly T[], count: number, random: () => number): T[] {
   const copy = [...values];
   for (let index = copy.length - 1; index > 0; index -= 1) {

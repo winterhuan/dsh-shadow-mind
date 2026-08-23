@@ -51,20 +51,29 @@ function runningSummary(
   return parts.join(" · ");
 }
 
-export function StatusBand(_props: StatusBandProps): JSX.Element | null {
+export function StatusBand(_props: StatusBandProps): JSX.Element {
   const snapshot = useShadowSnapshot();
-  if (snapshot.status !== "ready") return null;
+
+  if (snapshot.status === "idle") {
+    return (
+      <div style={bandStyle} title="/shadow status 查看完整状态">
+        <span style={strongStyle}>Shadow</span>
+        <span>· 初始化中</span>
+      </div>
+    );
+  }
+
+  if (snapshot.status === "error") {
+    return (
+      <div style={bandStyle} title={`${snapshot.message}（/shadow status 查看完整状态）`}>
+        <span style={strongStyle}>Shadow</span>
+        <span style={{ color: "var(--dsw-alias-state-error-primary)" }}>· 状态错误</span>
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{snapshot.message}</span>
+      </div>
+    );
+  }
+
   const state = snapshot.snapshot;
-  if (!state.present) return null;
-
-  const idle =
-    !state.paused &&
-    state.activeCount === 0 &&
-    state.eventCount === 0 &&
-    state.configError === null &&
-    state.diagnostics.length === 0;
-  if (idle) return null;
-
   const mode = state.paused
     ? "暂停"
     : state.autoEnabled
@@ -83,11 +92,7 @@ export function StatusBand(_props: StatusBandProps): JSX.Element | null {
       {!state.paused && state.activeCount > 0 && (
         <span style={strongStyle}>🐙 {runningSummary(state.running, now, 2)}</span>
       )}
-      {state.configError !== null && (
-        <span style={{ color: "var(--dsw-alias-state-error-primary)" }}>
-          配置错误
-        </span>
-      )}
+      {!state.paused && state.activeCount === 0 && <span>· idle</span>}
       {lastEvent !== undefined && <span>· {lastEvent.kind}</span>}
     </div>
   );

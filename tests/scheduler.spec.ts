@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decideHeartbeat, matchesModel } from "../src/scheduler.js";
+import { decideHeartbeat, matchesModel, shouldEvaluateHeartbeat } from "../src/scheduler.js";
 import type { ShadowDefinition } from "../src/types.js";
 
 function shadow(partial: Partial<ShadowDefinition> & { id: string }): ShadowDefinition {
@@ -110,5 +110,16 @@ describe("matchesModel", () => {
     expect(matchesModel(shadow({ id: "a", activeForModels: ["*"] }), "x/y")).toBe(true);
     expect(matchesModel(shadow({ id: "a", activeForModels: ["x/y"] }), "x/y")).toBe(true);
     expect(matchesModel(shadow({ id: "a", activeForModels: ["x/y"] }), "z/w")).toBe(false);
+  });
+});
+
+describe("shouldEvaluateHeartbeat", () => {
+  it("skips heartbeat when no tool results were produced", () => {
+    expect(shouldEvaluateHeartbeat(0)).toBe(false);
+  });
+
+  it("evaluates heartbeat when at least one tool result was produced", () => {
+    expect(shouldEvaluateHeartbeat(1)).toBe(true);
+    expect(shouldEvaluateHeartbeat(3)).toBe(true);
   });
 });

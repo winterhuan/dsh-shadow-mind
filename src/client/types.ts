@@ -43,7 +43,6 @@ export interface ShadowMindSnapshot {
     tools: string[];
   }>;
   diagnostics: ShadowRegistryDiagnostic[];
-  configError: string | null;
   heartbeatProbability: number;
   maxParallelShadows: number;
   defaultShadowTimeoutSeconds: number;

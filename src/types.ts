@@ -1,4 +1,7 @@
-export const DEFAULT_READ_TOOLS = ["read", "grep", "glob"] as const;
+import type { Agent } from "@deepseek-ai/dsh-agent";
+
+/** Thinking levels accepted for the global shadow default. */
+export type ShadowThinkingLevel = "minimal" | "low" | "medium" | "high";
 
 export interface ShadowConfig {
   heartbeatProbability: number;
@@ -7,7 +10,7 @@ export interface ShadowConfig {
   headlessDrainTimeoutSeconds: number;
   resultBatchWindowMs: number;
   defaultShadowModel?: string;
-  defaultThinkingLevel: string;
+  defaultThinkingLevel: ShadowThinkingLevel;
   randomSeed?: number;
 }
 
@@ -43,6 +46,8 @@ export interface ShadowReport {
   content: string;
   epoch: number;
   runId: string;
+  /** Child agent delivering the report; the delivery authority for reportFrom. */
+  childAgent: Agent;
 }
 
 export interface RuntimeEvent {
@@ -84,7 +89,6 @@ export interface ShadowMindSnapshot {
     tools: string[];
   }>;
   diagnostics: RegistryDiagnostic[];
-  configError: string | null;
   heartbeatProbability: number;
   maxParallelShadows: number;
   defaultShadowTimeoutSeconds: number;

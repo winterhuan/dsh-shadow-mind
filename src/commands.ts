@@ -1,6 +1,5 @@
 import type { Agent } from "@deepseek-ai/dsh-agent";
 import type { CommandRuntime, CommandInvocation } from "@deepseek-ai/dsh-commands";
-import { ConfigStore } from "./config.js";
 import { EntityStore } from "./entity-store.js";
 import { ShadowEventLog } from "./event-log.js";
 
@@ -17,7 +16,6 @@ export interface ShadowCommandsOptions {
 export class ShadowCommands {
   constructor(
     private readonly entityStore: EntityStore,
-    private readonly configStore: ConfigStore,
     private readonly eventLog: ShadowEventLog,
     private readonly handlers: ShadowCommandsOptions,
   ) {}

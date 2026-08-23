@@ -5,7 +5,7 @@ import type { SubagentRuntime } from "@deepseek-ai/dsh-subagent";
 import type { ShadowDefinition } from "./types.js";
 import { ShadowEventLog } from "./event-log.js";
 import { serializeTrajectory } from "./trajectory.js";
-import { DEFAULT_READ_TOOLS } from "./constants.js";
+import { DEFAULT_READ_TOOLS, SHADOW_REPORT_TOOL } from "./constants.js";
 
 export interface ShadowLaunchResult {
   childId: string;
@@ -13,7 +13,11 @@ export interface ShadowLaunchResult {
 }
 
 export interface ShadowLaunchOptions {
-  /** Explicit tool allowlist; falls back to the shadow's or the default read tools. */
+  /**
+   * Extra tools to union onto the shadow's configured tools and the default
+   * read-only toolset. The final allowlist is always `DEFAULT_READ_TOOLS ∪
+   * shadow.tools ∪ options.tools`.
+   */
   tools?: string[];
   /** Plugin-level default shadow model (config `default_shadow_model`). */
   defaultModel?: string;
@@ -37,11 +41,7 @@ export class ShadowRunner {
 
     const trajectory = await this.buildTrajectory(agent);
     const prompt = buildShadowPrompt(shadow, trajectory);
-    const allow = options?.tools?.length
-      ? options.tools
-      : shadow.tools.length
-        ? shadow.tools
-        : [...DEFAULT_READ_TOOLS];
+    const allow = [...new Set([...DEFAULT_READ_TOOLS, SHADOW_REPORT_TOOL, ...shadow.tools, ...(options?.tools ?? [])])];
     const agentOptions = this.resolveAgentOptions(agent, shadow, options?.defaultModel);
 
     const spec = {
@@ -124,8 +124,9 @@ export function buildShadowPrompt(shadow: ShadowDefinition, trajectory: string):
     shadow.prompt,
     "",
     "Use only the tools you have been given. Do not modify anything unless explicitly allowed.",
-    "If you find nothing worth reporting, reply exactly NOT_RELEVANT and stop.",
-    "Otherwise, reply with a concise, actionable report; it will be delivered to the main agent as a background notice.",
+    "If the trajectory is unrelated to your responsibility, reply exactly NOT_RELEVANT and stop immediately.",
+    "If you have a concrete finding, correction, or completed result that the main agent should receive, call report_to_main with a concise, actionable report.",
+    "Calling report_to_main ends this run immediately. If your work produces nothing worth reporting, finish silently.",
     "",
     `<main-agent-trajectory>${body ? `\n${body}\n` : " (empty)"}</main-agent-trajectory>`,
   ].join("\n");

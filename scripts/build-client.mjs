@@ -25,7 +25,19 @@ await build({
   format: "cjs",
   platform: "browser",
   target: ["es2022"],
-  external: ["react", "react/jsx-runtime"],
+  // The shell's module table resolves bare "react" but injects no React
+  // global — JSX must compile to the automatic runtime (jsx-runtime imports),
+  // not the classic React.createElement transform.
+  jsx: "automatic",
+  external: [
+    "react",
+    "react/jsx-runtime",
+    // Shared shell modules (module-table rows): the runtime's client face
+    // carries zustand singletons and slot registry state, so it must be
+    // required from the loader table like every tree bundle does — never
+    // inlined, or two module instances would fight over the same stores.
+    "@deepseek-ai/dsh-client-runtime/client",
+  ],
   banner: { js: banner },
   footer: { js: footer },
   sourcemap: true,
@@ -42,13 +54,47 @@ if (!source.includes('id: "@winterchenhuan/dsh-shadow-mind"')) {
   throw new Error(`${OUT_FILE}: wrapper id does not match the package name`);
 }
 
+// Tree-bundle externals resolved through real node_modules (the smoke check
+// only needs the runtime's exported functions, not live shell singletons).
+function treeExternal(specifier) {
+  const local = createRequire(import.meta.url);
+  // Platform modules are ordinary node packages locally; the runtime's
+  // ui-slots face is likewise a ModuleLoader closure, so unwrap it the same way.
+  if (specifier === "@deepseek-ai/cordis" || specifier === "react" || specifier === "react/jsx-runtime") {
+    return local(specifier);
+  }
+  if (specifier === "@deepseek-ai/dsh-client-ui-slots") {
+    return local("@deepseek-ai/dsh-client-ui-slots");
+  }
+  throw new Error(`runtime external not shimmed: ${specifier}`);
+}
+
 const requireShim = (specifier) => {
   const local = createRequire(import.meta.url);
   if (specifier === "react" || specifier === "react/jsx-runtime") {
     return local(specifier);
   }
+  // Materialize the runtime's client face the way the shell module table
+  // would: its published lib/client.js is itself a ModuleLoader closure, so
+  // evaluate it in this scope and hand the resulting exports back.
+  if (specifier === "@deepseek-ai/dsh-client-runtime/client") {
+    // The package exports map does not expose ./lib/client.js, so resolve
+    // through the package root instead of createRequire.resolve.
+    const runtimeRoot = local.resolve("@deepseek-ai/dsh-client-runtime/package.json");
+    const source = local("fs").readFileSync(
+      runtimeRoot.replace(/package\.json$/, "lib/client.js"),
+      "utf8",
+    );
+    const exports = {};
+    const load = (value) => {
+      Object.assign(exports, value.factory(treeExternal));
+    };
+    new Function("window", source)({ __ModuleLoader__: { load } });
+    return exports;
+  }
   throw new Error(`client bundle requires unexpected external: ${specifier}`);
 };
+
 
 let entry;
 const window = {

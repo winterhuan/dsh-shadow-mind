@@ -52,7 +52,6 @@ const snapshotSchema = z.looseObject({
   recentEvents: z.array(eventSchema),
   shadows: z.array(shadowSummarySchema),
   diagnostics: z.array(diagnosticSchema),
-  configError: z.string().nullable(),
   heartbeatProbability: z.number(),
   maxParallelShadows: z.number(),
   defaultShadowTimeoutSeconds: z.number(),

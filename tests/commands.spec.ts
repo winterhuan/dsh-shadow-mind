@@ -19,7 +19,7 @@ function makeCommand() {
     handler = def.handler;
     return () => {};
   });
-  const commands = new ShadowCommands({} as never, {} as never, {} as never, handlers);
+  const commands = new ShadowCommands({} as never, {} as never, handlers);
   commands.register({ register } as never);
   return { handler: () => handler, handlers };
 }

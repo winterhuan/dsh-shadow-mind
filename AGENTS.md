@@ -18,11 +18,17 @@
 - `10px` 只用于极弱、非关键元数据，不用于正文、操作标签、表单内容或必须快速识别的状态；不要用缩小字体代替合理的布局和截断。
 - 缩小字号时同步检查行高、图标尺寸、对齐、焦点环和点击区域；文字可以紧凑，但交互命中区不得随之缩小。
 
+# Web client / Typert Remote 约束
+
+- client 入口的 `inject` 只声明 shell 启动时已存在的服务（如 `slots`、`remote`）。`remote.<namespace>` 命名空间服务由本插件自己 `apply` 里的 `ctx.remote.$mount(...)` 创建，而 Cordis fiber 会等所有 inject 的服务存在才执行 apply——把 `remote.shadowMind` 写进 inject 会自我死锁，入口永远 pending，web boot 直接报 "entry did not activate"。只有静态装配层（@deepseek-ai/dsh-api-remotes）预挂载的树内命名空间才允许 inject。
+- 挂载成功后访问 `ctx.remote.shadowMind` 不需要 inject 声明：traceable 服务代理会把点号键转发到对应命名空间服务。轮询等后台读取用 `ctx.get("remote.<namespace>")` 容错读取，缺失时走错误分支而不是抛 "cannot get property ... without inject"。
+- 遇到 "waiting for service: remote.x" 先查提供方是谁、何时创建，再决定是否 inject；不要因为属性访问报错就往 inject 里加服务名。
+
 # Release process
 
 dsh-plugin 通过 `dsh plugin --profile <profile> add <npm 包名或本地路径>` 安装，不生成 standalone ZIP 等额外交付物；发布产物只有 npm 包。用户安装方式：
 
-- 从 npm 安装：`dsh plugin --profile web add @winterchenhuan/dsh-shadow-mind`
+- 从 npm 安装：`dsh plugin --profile web add @winterchenhuan/dsh-shadow-mind@latest`
 - 本地目录开发：`npm run build` 后 `dsh plugin --profile web add ./dsh-shadow-mind`
 
 1. 发布前更新 `package.json` 版本，并运行 `npm install` 同步 lockfile。不要覆盖同版本的既有正式产物；代码有变化时应提升版本。

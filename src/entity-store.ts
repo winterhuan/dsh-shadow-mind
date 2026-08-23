@@ -1,14 +1,13 @@
-import { readFile, unlink, writeFile } from "node:fs/promises";
+import { unlink, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import YAML from "yaml";
-import { serializeConfig } from "./config.js";
 import { parseShadowMarkdown, ShadowRegistry } from "./registry.js";
-import type { ShadowConfig, ShadowDefinition } from "./types.js";
+import type { ShadowDefinition } from "./types.js";
 
 export type ShadowDraft = Partial<Omit<ShadowDefinition, "filePath">> & { id: string; prompt?: string };
 
 export class EntityStore {
-  constructor(readonly registry: ShadowRegistry, private readonly configPath: string) {}
+  constructor(readonly registry: ShadowRegistry) {}
 
   async list(): Promise<ShadowDefinition[]> {
     return (await this.registry.load()).shadows;
@@ -43,14 +42,6 @@ export class EntityStore {
 
   async delete(id: string): Promise<void> {
     await unlink((await this.get(id)).filePath);
-  }
-
-  async readConfig(): Promise<string> {
-    return readFile(this.configPath, "utf8");
-  }
-
-  async writeConfig(config: ShadowConfig): Promise<void> {
-    await writeFile(this.configPath, serializeConfig(config), "utf8");
   }
 }
 

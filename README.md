@@ -19,7 +19,7 @@ This project is a DSH plugin implementation of [pi-shadow-mind](https://github.c
 - **Per-run timeout**: `timeout_seconds` (or the config default) bounds each shadow run; an expired run is interrupted and its slot is released.
 - **Lifecycle cleanup**: `subagent/end` removes finished shadow runs, so slots and `active` counts stay accurate within an epoch.
 - **Management tools**: Create, update, delete, list, enable, and disable shadow definitions via model tools. Persistent writes are gated behind the DSH approval service when one is mounted.
-- **Config tools**: Read and write the global `config.json` via model tools (writes validate the merged result before persisting).
+- **Config tools**: Read and write the global configuration via model tools (writes validate the merged result before persisting).
 - **Pause/resume/epoch**: `/shadow pause` and `/shadow resume`; pausing also aborts running shadows. New user input increments the epoch and cancels running shadows from the previous epoch.
 - **Auto toggle**: `/shadow auto on|off` actually enables/disables heartbeat activation.
 - **Tool-call argument redaction**: Tool-call arguments are redacted before being forwarded to shadows (credentials are not leaked). Tool results are summarized.
@@ -31,7 +31,7 @@ DSH plugins are loaded through a Cordis composition (profile or agent preset).
 ### 1. Install the package into a DSH profile
 
 ```bash
-dsh plugin --profile web add @winterchenhuan/dsh-shadow-mind
+dsh plugin --profile web add @winterchenhuan/dsh-shadow-mind@latest
 ```
 
 For local development, build the package before adding the directory so `dist/index.js` exists:
@@ -45,7 +45,7 @@ dsh plugin --profile web add /path/to/dsh-shadow-mind
 
 The profile stores the local package as a path dependency; rerun `npm run build` after source changes, then restart DSH.
 
-The current repository version is `0.1.6`. Installing by package name resolves the latest published npm version; to test an unpublished checkout, use the local-directory procedure above.
+The current repository version is `0.1.7`. The `@latest` suffix makes the add command re-resolve to the newest published version; a bare `add <pkg>` keeps the range already recorded in the profile (e.g. `^0.1.6`) and the lockfile-pinned version, so it will not upgrade an existing installation. To test an unpublished checkout, use the local-directory procedure above.
 
 The package ships a `cordis.patch.yml`. The profile loader reads the package's `dsh.bundle.patch` manifest and applies it automatically; no manual profile `cordis.patch.yml` editing is needed.
 
@@ -55,11 +55,16 @@ Restart DSH and the plugin will be loaded. The package exports a default Cordis 
 
 ## Configuration
 
-Shadow definitions and global config live in:
+Global configuration is a user-settings namespace: the single source of truth is the `shadow-mind:` section of `~/.dsh/settings.yaml`. It can be edited from three places that stay in sync:
+
+- **Settings page**: DSH Web 设置页的「可配置插件」里有一张 Shadow Mind 卡片，按字段编辑、保存即写入（支持覆盖标记与重置）。
+- **Model tools**: `write_shadow_config` / `read_shadow_config`（写入前需要用户批准）。
+- **Manual edit**: directly edit the `shadow-mind:` section of `~/.dsh/settings.yaml`; changes are picked up live.
+
+Shadow definitions (Markdown) still live in:
 
 ```
 $DSH_HOME/agent/shadow-minds/
-├── config.json
 ├── grounded-reviewer.md
 ├── requirement-keeper.md
 └── ...
@@ -67,20 +72,32 @@ $DSH_HOME/agent/shadow-minds/
 
 `$DSH_HOME` defaults to `~/.dsh` (honoring the `DSH_HOME` environment variable), so the default location is `~/.dsh/agent/shadow-minds/`.
 
-Example `config.json`:
+Example `settings.yaml` section (fields absent from the section fall back to schema defaults):
 
-```json
-{
-  "heartbeat_probability": 0.33,
-  "max_parallel_shadows": 2,
-  "default_shadow_timeout_seconds": 120,
-  "headless_drain_timeout_seconds": 30,
-  "result_batch_window_ms": 5000,
-  "default_shadow_model": null,
-  "default_thinking_level": "low",
-  "random_seed": null
-}
+```yaml
+shadow-mind:
+  heartbeatProbability: 0.33
+  maxParallelShadows: 2
+  defaultShadowTimeoutSeconds: 120
+  defaultThinkingLevel: low
 ```
+
+Field reference:
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `heartbeatProbability` | `0.333…` | Per-turn activation probability per eligible shadow, `0..1` |
+| `maxParallelShadows` | `2` | Concurrently running shadows, `1..8` |
+| `defaultShadowTimeoutSeconds` | `300` | Per-shadow run timeout when the definition sets none |
+| `headlessDrainTimeoutSeconds` | `120` | Grace window for settling children at shutdown |
+| `resultBatchWindowMs` | `400` | Window coalescing multiple reports into one wakeup |
+| `defaultShadowModel` | *(unset → main model)* | Model used when a shadow declares none |
+| `defaultThinkingLevel` | `low` | `minimal` / `low` / `medium` / `high` |
+| `randomSeed` | *(unset → random)* | Deterministic heartbeat RNG seed; applies to the next session |
+
+### Legacy config.json migration
+
+An old `$DSH_HOME/agent/shadow-minds/config.json` is imported into the settings section automatically on the first startup after upgrading, then renamed to `config.json.migrated` so it cannot resurrect stale values later. A file that fails validation is renamed aside too — the plugin keeps running on defaults and the values survive inside the `.migrated` copy.
 
 The timeout and heartbeat fields are active. `headless_drain_timeout_seconds`, `result_batch_window_ms`, and `default_thinking_level` are accepted for configuration compatibility but are not active yet; see [Known Limitations](#known-limitations).
 

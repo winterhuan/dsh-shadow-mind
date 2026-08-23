@@ -58,12 +58,12 @@ Shadow 的 Markdown 定义持久存在，但运行实例不保留长期记忆。
 ├── requirement-keeper.md
 └── logs/
     └── grounded-reviewer/
-        └── <debug session logs>
+        └── <reserved for future debug session logs>
 ```
 
 该目录属于用户数据，不放入插件安装目录，也不随当前项目切换。插件级配置保存在 `config.json`；registry 只扫描目录顶层的 `.md` 文件，不读取 `config.json`，也不递归读取 `logs/`。
 
-`config.json` 保存默认 Shadow 模型、`default_thinking_level`、`heartbeat_probability`、`max_parallel_shadows`、`default_shadow_timeout_seconds` 和 `result_batch_window_ms` 等全局调度配置。`default_shadow_model` 省略时，插件使用激活时的当前 Main 模型；用户也可以配置一个固定默认模型。`default_thinking_level` 的内置默认值为 `low`。
+`config.json` 保存默认 Shadow 模型、`heartbeat_probability`、`max_parallel_shadows`、`default_shadow_timeout_seconds` 和 `random_seed` 等全局调度配置。`default_shadow_model` 省略时，插件使用激活时的当前 Main 模型；用户也可以配置一个固定默认模型。`headless_drain_timeout_seconds`、`result_batch_window_ms` 与 `default_thinking_level` 目前仅解析并持久化，尚未参与调度逻辑（见下文标注）。
 
 每次 Main `turn_end` 进行 heartbeat 判断前，插件检查并重新加载发生变化的 `config.json`。新配置只影响后续调度和新建实例；已经运行的 Shadow 继续使用启动时取得的配置快照。
 
@@ -78,7 +78,6 @@ Shadow 的 Markdown 定义持久存在，但运行实例不保留长期记忆。
 id: grounded-reviewer
 name: 项目事实检查者
 enabled: true
-debug: false
 activation_probability: 0.6
 run_with_model: openai/gpt-5-mini
 thinking_level: low
@@ -103,11 +102,10 @@ active_for_models:
 | `id` | Shadow 的稳定标识；省略时使用 Markdown 文件名（不含扩展名） |
 | `name` | 展示名称；省略时使用最终解析出的 `id` |
 | `enabled` | 是否参与调度；默认 `true` |
-| `debug` | 是否保存完整 Shadow Session 日志；默认 `false` |
 | `activation_probability` | 每次 heartbeat 时独立激活的概率，范围为 `0` 到 `1`；默认 `0.3` |
 | `active_for_models` | 适用于哪些 Main 模型；`"*"` 表示全部模型，省略时默认 `["*"]` |
 | `run_with_model` | Shadow 自己使用的模型；省略时使用插件默认模型 |
-| `thinking_level` | Shadow 使用的 thinking level；省略时使用插件默认值，再回退到 Main 会话当前生效等级 |
+| `thinking_level` | 预留的 thinking level 字段；目前仅解析并随定义持久化，实际选择逻辑尚未实现，运行时不生效 |
 | `timeout_seconds` | Shadow 单次运行超时；省略时使用插件默认超时 |
 | `tools` | 在 DSH 默认只读工具集（`readOnlyTools`）之上追加的工具白名单；默认 `[]` |
 
@@ -117,7 +115,7 @@ active_for_models:
 
 如果显式配置的 `run_with_model` 当前不存在、未认证或不可用，本次激活失败并写入轻量运行事件，不自动换用其他模型。只有省略该字段时才使用插件默认 Shadow 模型。
 
-`thinking_level` 的选择优先级为：Shadow 自身配置 → 插件的 `default_thinking_level` → 激活时 Main 会话当前生效的 thinking level。所选模型不支持当前候选等级时，依序尝试下一个候选；全部候选都不支持时本次激活失败并记录原因。这样当插件默认等级不被 Shadow 执行模型支持（例如只支持高推理档位的闪速模型）时，Shadow 会自动回退到 Main 正在使用的等级，而不是无谓失败。实际生效的等级记录在 run-end 事件中。
+`thinking_level` 的候选优先级设计为：Shadow 自身配置 → 插件的 `default_thinking_level` → 激活时 Main 会话当前生效的 thinking level；所选模型不支持当前候选等级时依序尝试下一个。这一逻辑尚未实现，当前所有激活均使用执行模型在 DSH 侧的默认推理档位；实现落地后再更新本段描述。
 
 每个 Shadow 的最终工具集合由三部分组成：
 
@@ -145,7 +143,7 @@ DSH 的通用 `ToolDefinition` 没有可供插件查询的只读属性，因此�
 
 每个 Shadow 运行实例还会固定获得内置工具 `report_to_main`。该工具用于提交一条值得 Main 注意的发现，不属于普通工具白名单，也不能被移除。它是终止型工具：一旦调用，当前 Shadow Agent loop 立即结束，运行实例随即回收，因此一次激活最多上报一条意见。Shadow 正常结束且未调用该工具时，运行结果视为“保持沉默”。
 
-“保持沉默”不代表 Shadow 没有执行工作。即使运行中成功调用过写入或其他有副作用的工具，Shadow 仍可不调用 `report_to_main` 而正常结束；插件不强制生成工作报告。此类行为只通过轻量运行事件和可选的 debug Session 日志追踪。
+“保持沉默”不代表 Shadow 没有执行工作。即使运行中成功调用过写入或其他有副作用的工具，Shadow 仍可不调用 `report_to_main` 而正常结束；插件不强制生成工作报告。此类行为只通过轻量运行事件追踪。
 
 第一版 `report_to_main` 只接受一个 `content` 参数。它不包含严重度、类别或固定的报告结构；不同 Shadow 的表达要求由各自 Markdown 正文定义。
 
@@ -167,15 +165,7 @@ report_to_main({ content: "..." })
 
 DSH 主界面常驻一个紧凑状态指示，例如 `🐙 2`，数字表示当前运行的 Shadow 实例数。产生报告、超时或错误时指示器短暂改变状态，不弹出逐次通知；详细信息统一进入 `/shadow` 面板。
 
-只有设置 `debug: true` 的 Shadow 才保存完整的临时 AgentSession 日志，存入 `~/.dsh/agent/shadow-minds/logs/<shadow-id>/`。
-
-每次 Shadow 激活对应一个独立日志文件。文件覆盖该次临时 AgentSession 从创建到结束的完整生命周期；沉默、上报、超时和中止都会正常收口并记录最终状态。因此目录中的文件数量可以直接反映 `debug` 开启期间该 Shadow 的激活次数。
-
-日志使用 DSH 原生 Session JSONL 格式，并在运行过程中增量写入。每个文件同时标记 Shadow ID、所属 epoch 和最终状态，以便复用 DSH 的会话查看能力并在异常退出时保留已有记录。
-
-完整调试日志默认永久保留，不自动轮转或删除。任何日志清理都必须由用户显式执行，避免目录文件数失去累计激活次数的含义。
-
-完整日志包含 Shadow 实际收到的净化轨迹、Shadow thinking、自己的工具调用和工具结果，可能包含其独立读取到的项目内容，因此 `debug` 默认关闭。
+> **注意**：当前版本已移除 `debug` 字段。完整 Shadow Session 日志暂不支持；如需排查 Shadow 行为，请通过 `/shadow status` 或 `shadow-mind` Web UI 状态条查看运行事件。
 
 建议提供以下工具，使用户与 AI 操作同一套实体：
 
@@ -381,7 +371,7 @@ Main 声称项目已有 UserRole，但当前轨迹不足以支持该结论。
 当前方案遗漏了用户要求的访客只读访问。
 ```
 
-聚合只负责按 Shadow 名称分段拼接，不调用额外模型进行总结或去重。插件配置 `result_batch_window_ms` 控制收集窗口，默认值为 `400`。
+聚合只负责按 Shadow 名称分段拼接，不调用额外模型进行总结或去重。收集窗口原计划由插件配置 `result_batch_window_ms` 控制（默认 `400`），该参数当前仅解析、尚未参与调度，窗口固定为单次 heartbeat 周期。
 
 聚合消息仍遵循 epoch：窗口内混入的过期结果在发送前被丢弃。
 
@@ -391,7 +381,7 @@ Main 声称项目已有 UserRole，但当前轨迹不足以支持该结论。
 
 历史 `shadow-report` 会进入后续 Shadow 的净化轨迹，形成显式反馈链。新的 Shadow 可以结合 Main 对既有报告的响应继续复查：问题已解决则保持沉默，尚未解决则再次上报。
 
-Shadow 自己的静默工具调用和行动摘要不进入 Main 消息历史，也不进入后续 Shadow 的净化轨迹。它们只体现在共享的外部环境、Main Session 的轻量观测 entries 和可选 debug 日志中。Shadow 之间的显式认知传播只通过 `shadow-report` 发生。
+Shadow 自己的静默工具调用和行动摘要不进入 Main 消息历史，也不进入后续 Shadow 的净化轨迹。它们只体现在共享的外部环境和 Main Session 的轻量观测 entries 中。Shadow 之间的显式认知传播只通过 `shadow-report` 发生。
 
 ## 7. 运行状态
 
@@ -403,7 +393,6 @@ current Main model
 model call count
 heartbeat_probability
 max_parallel_shadows
-result_batch_window_ms
 default_shadow_timeout_seconds
 Shadow activation probabilities
 running Shadow IDs
@@ -415,7 +404,7 @@ Shadow Markdown 是定义，不承担日志和运行状态。调度记录、运�
 
 Shadow 的临时 AgentSession 不跨激活复用，也不写回记忆。
 
-轻量事件属于运行观测数据，不参与任何 Agent 的上下文。`debug: true` 产生的完整 Session 日志也只用于调试，不会成为后续 Shadow 的记忆。
+轻量事件属于运行观测数据，不参与任何 Agent 的上下文。
 
 插件提供 `/shadow pause` 与 `/shadow resume`，只控制当前 Main Session 是否继续产生 heartbeat，不修改全局 Shadow Markdown。执行 pause 时立即中止当前 Session 已运行的 Shadow、清空尚未发送的聚合结果并释放并发槽位；resume 后从后续 Main `turn_end` 恢复概率判断。
 
@@ -448,9 +437,7 @@ Shadow 的临时 AgentSession 不跨激活复用，也不写回记忆。
 - 为每个 Shadow 配置工具白名单，默认使用 DSH 的 `readOnlyTools`；白名单中的额外工具视为已授权；
 - 提供插件级默认运行超时，并允许单个 Shadow 覆盖；
 - 记录轻量运行事件并提供 `/shadow status`；
-- 为 `debug: true` 的 Shadow 保存完整临时 Session 日志；
-- 每次 Shadow 激活使用一个独立日志文件，并记录最终状态；
-- 调试日志采用 DSH 原生 Session JSONL 并增量写入；
+
 - 运行中使用 `steer`，Main 结束后使用 follow-up；
 - 在短聚合窗口内合并同期 Shadow 意见后一次性注入；
 - 使用可见的 `shadow-report` 自定义消息呈现聚合结果；
