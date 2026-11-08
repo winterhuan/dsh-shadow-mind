@@ -1,6 +1,6 @@
 {
-  "name": "dsh-shadow-mind",
-  "version": "0.2.0",
+  "name": "@winterhuan/dsh-shadow-mind",
+  "version": "0.2.1",
   "description": "Read-only background and completion reviews for DeepSeek Harness",
   "license": "MIT",
   "repository": {

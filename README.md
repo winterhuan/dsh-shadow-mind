@@ -3,7 +3,7 @@ description: "Configure independent read-only reviews of DSH tasks with Markdown
 kind: "package-bundle"
 ---
 
-# dsh-shadow-mind
+# @winterhuan/dsh-shadow-mind
 
 English | [中文](README.zh.md)
 
@@ -29,10 +29,12 @@ Use Node.js `^22.19.0 || >=24`, pnpm `11.7.0`, and exactly DSH `0.2.2-rc.1`. The
 
 ### Install the remote release
 
+If this profile has the unscoped `dsh-shadow-mind` package, remove that layer with `dsh plugin --profile web remove dsh-shadow-mind` before installing the scoped release.
+
 Install the fixed Git revision into your existing Web profile, then restart DSH. The bundle activates its scheduler, commands, and review preset; add responsibility files separately. Without enabled definitions, it does not start model reviews.
 
 ```sh
-dsh plugin --profile web add 'git+https://github.com/winterhuan/dsh-shadow-mind.git#c0e75da6cdba40ca8ab9d40334379a799b156a2c'
+dsh plugin --profile web add github:winterhuan/dsh-shadow-mind#v0.2.1
 ```
 
 ### Install a local build
@@ -62,7 +64,7 @@ YAML
 dsh --profile shadow-dev --patch "$DSH_HOME/workspace.patch.yml" --host 127.0.0.1 --port 0 --no-open
 ```
 
-Open the local URL printed by DSH and send a task. Rebuild, restart the development process, and hard-refresh Web after source edits. Remove this layer with `dsh plugin --profile shadow-dev remove dsh-shadow-mind`.
+Open the local URL printed by DSH and send a task. Rebuild, restart the development process, and hard-refresh Web after source edits. Remove this layer with `dsh plugin --profile shadow-dev remove @winterhuan/dsh-shadow-mind`.
 
 ### Control reviews
 

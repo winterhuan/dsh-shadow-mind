@@ -3,7 +3,7 @@ description: "通过 Markdown 职责、后台检查和完成反馈，为 DSH 任
 kind: "package-bundle"
 ---
 
-# dsh-shadow-mind
+# @winterhuan/dsh-shadow-mind
 
 [English](README.md) | 中文
 
@@ -29,10 +29,12 @@ kind: "package-bundle"
 
 ### 安装远程发布版
 
+若此 profile 已安装无 scope 的 `dsh-shadow-mind`，先使用 `dsh plugin --profile web remove dsh-shadow-mind` 移除旧安装层，再安装带 scope 的发布包。
+
 将固定 Git 提交安装到已有的 Web profile，然后重启 DSH。安装层会启用调度器、命令和审查 preset；职责文件需要单独添加。没有已启用的职责时，不会启动模型审查。
 
 ```sh
-dsh plugin --profile web add 'git+https://github.com/winterhuan/dsh-shadow-mind.git#c0e75da6cdba40ca8ab9d40334379a799b156a2c'
+dsh plugin --profile web add github:winterhuan/dsh-shadow-mind#v0.2.1
 ```
 
 ### 安装本地构建
@@ -62,7 +64,7 @@ YAML
 dsh --profile shadow-dev --patch "$DSH_HOME/workspace.patch.yml" --host 127.0.0.1 --port 0 --no-open
 ```
 
-打开 DSH 输出的本地地址并发送任务。修改源码后重新构建、重启开发进程并硬刷新 Web。使用 `dsh plugin --profile shadow-dev remove dsh-shadow-mind` 移除此安装层。
+打开 DSH 输出的本地地址并发送任务。修改源码后重新构建、重启开发进程并硬刷新 Web。使用 `dsh plugin --profile shadow-dev remove @winterhuan/dsh-shadow-mind` 移除此安装层。
 
 ### 控制审查
 

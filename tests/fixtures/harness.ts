@@ -77,7 +77,7 @@ export async function harness(respond: Respond, config: Partial<Config> = {}, de
   if (preset?.plugins === undefined) throw new Error('review preset missing')
   const plugins = preset.plugins.map(row => ({ ...row,
     ...row.name !== '@deepseek-ai/dsh-agent-instructions' ? {} : { config: { ...row.config, dshHome: join(directory, 'dsh-home'), agentsHome: join(directory, 'agents-home') } },
-    name: row.name === 'dsh-shadow-mind/review-policy' ? new URL('../../src/review-policy.ts', import.meta.url).href : import.meta.resolve(row.name),
+    name: row.name === '@winterhuan/dsh-shadow-mind/review-policy' ? new URL('../../src/review-policy.ts', import.meta.url).href : import.meta.resolve(row.name),
   }))
   await ctx.plugin({ inject: ['agentPresets'], async* apply(scope: Context) {
     yield await scope.agentPresets.register({ id: 'standard', plugins: [] })
