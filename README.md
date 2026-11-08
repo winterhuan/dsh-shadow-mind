@@ -27,6 +27,14 @@ Review a task independently while the main agent works and before its turn ends.
 
 Use Node.js `^22.19.0 || >=24`, pnpm `11.7.0`, and exactly DSH `0.2.2-rc.1`. The profile must supply native Agent Presets, the `spawn` provider, filesystem services, and a configured model. The standard Web profile provides the required services; a custom headless profile must compose them explicitly.
 
+### Install the remote release
+
+Install the fixed Git revision into your existing Web profile, then restart DSH. The bundle activates its scheduler, commands, and review preset; add responsibility files separately. Without enabled definitions, it does not start model reviews.
+
+```sh
+dsh plugin --profile web add 'git+https://github.com/winterhuan/dsh-shadow-mind.git#c0e75da6cdba40ca8ab9d40334379a799b156a2c'
+```
+
 ### Install a local build
 
 Run these commands from this package directory. Keep the same shell so the temporary `DSH_HOME` remains selected; this profile has separate sessions and configuration.

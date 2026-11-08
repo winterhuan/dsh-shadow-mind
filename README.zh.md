@@ -27,6 +27,14 @@ kind: "package-bundle"
 
 使用 Node.js `^22.19.0 || >=24`、pnpm `11.7.0` 和精确版本 DSH `0.2.2-rc.1`。Profile 必须提供原生 Agent Preset、`spawn` 提供者、文件系统服务和已配置的模型。标准 Web profile 提供所需服务；自定义 headless profile 必须显式组合这些能力。
 
+### 安装远程发布版
+
+将固定 Git 提交安装到已有的 Web profile，然后重启 DSH。安装层会启用调度器、命令和审查 preset；职责文件需要单独添加。没有已启用的职责时，不会启动模型审查。
+
+```sh
+dsh plugin --profile web add 'git+https://github.com/winterhuan/dsh-shadow-mind.git#c0e75da6cdba40ca8ab9d40334379a799b156a2c'
+```
+
 ### 安装本地构建
 
 在本包目录执行以下命令。保持在同一 shell 中操作，以继续使用临时 `DSH_HOME`；此 profile 的会话和配置独立保存。
