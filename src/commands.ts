@@ -1,63 +1,31 @@
-import type { Agent } from "@deepseek-ai/dsh-agent";
-import type { CommandRuntime, CommandInvocation } from "@deepseek-ai/dsh-commands";
-import { EntityStore } from "./entity-store.js";
-import { ShadowEventLog } from "./event-log.js";
+/** Human controls use DSH's existing command results and conversation UI. */
+import type { Context } from '@deepseek-ai/cordis'
+import { CommandDefinitionId } from '@deepseek-ai/dsh-commands'
+import type {} from './index.ts'
 
-export interface ShadowCommandsOptions {
-  onProbe: (agent: Agent, id?: string, tools?: string[]) => Promise<string>;
-  onList: () => Promise<string>;
-  onClean: (agent: Agent) => Promise<string> | string;
-  onAuto: (enabled: boolean) => string;
-  onPause: (agent: Agent) => string;
-  onResume: () => string;
-  onStatus: () => Promise<string> | string;
-}
+export const name = 'shadow-mind-commands'
+export const inject = ['commands', 'shadowMind']
 
-export class ShadowCommands {
-  constructor(
-    private readonly entityStore: EntityStore,
-    private readonly eventLog: ShadowEventLog,
-    private readonly handlers: ShadowCommandsOptions,
-  ) {}
-
-  register(commands: CommandRuntime): () => void {
-    return commands.register({
-      name: "shadow",
-      description: "Shadow Mind: /shadow status | probe <id> [tools] | list | clean | auto <on|off> | pause | resume",
-      input: { hint: "status | probe <id> [tools] | list | clean | auto <on|off> | pause | resume" },
-      handler: async (invocation: CommandInvocation) => {
-        const raw = invocation.rawInput.trim();
-        const parts = raw.split(/\s+/);
-        const sub = parts[0] || "status";
-        const rest = parts.slice(1).join(" ");
-        try {
-          switch (sub) {
-            case "status":
-              return { kind: "success", text: await this.handlers.onStatus() };
-            case "probe": {
-              const probeParts = rest.trim().split(/\s+/);
-              const id = probeParts[0] || undefined;
-              const tools = probeParts[1] ? probeParts[1].split(",") : undefined;
-              const text = await this.handlers.onProbe(invocation.agent, id, tools);
-              return { kind: "success", text };
-            }
-            case "list":
-              return { kind: "success", text: await this.handlers.onList() };
-            case "clean":
-              return { kind: "success", text: await this.handlers.onClean(invocation.agent) };
-            case "auto":
-              return { kind: "success", text: this.handlers.onAuto(rest.trim().toLowerCase() === "on") };
-            case "pause":
-              return { kind: "success", text: this.handlers.onPause(invocation.agent) };
-            case "resume":
-              return { kind: "success", text: this.handlers.onResume() };
-            default:
-              return { kind: "success", text: "Usage: /shadow status | probe <id> [tools] | list | clean | auto <on|off> | pause | resume\n" + await this.handlers.onStatus() };
-          }
-        } catch (error) {
-          return { kind: "error", text: String(error) };
-        }
-      },
-    });
-  }
+/**
+ * Register manual checks, pause, resume, and status without adding model tools.
+ * @param ctx - Plugin context owning the command registration.
+ */
+export function apply(ctx: Context): void {
+  ctx.effect(() => ctx.commands.register({ definitionId: CommandDefinitionId('dsh-shadow-mind/shadow'), name: 'shadow',
+    description: 'inspect and control independent read-only reviews', input: { hint: 'status | check [id] | pause | resume' },
+    async handler({ agent, rawInput, signal }) {
+      const [action = 'status', id, ...rest] = rawInput.trim().split(/\s+/u).filter(Boolean)
+      if (rest.length > 0 || (action !== 'check' && id !== undefined)) return { kind: 'error', text: 'Usage: /shadow status | check [id] | pause | resume' }
+      if (action === 'status') return { kind: 'success', text: await ctx.shadowMind.status(agent) }
+      if (action === 'pause' || action === 'resume') {
+        await ctx.shadowMind.pause(agent, action === 'pause')
+        return { kind: 'success', text: action === 'pause' ? 'Shadow Mind paused; active reviews stopped.' : 'Shadow Mind resumed for future reviews.' }
+      }
+      if (action === 'check') {
+        await ctx.shadowMind.review(agent, signal, id)
+        return { kind: 'success', text: await ctx.shadowMind.status(agent) }
+      }
+      return { kind: 'error', text: 'Usage: /shadow status | check [id] | pause | resume' }
+    },
+  }))
 }

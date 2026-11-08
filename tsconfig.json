@@ -1,13 +1,12 @@
 {
   "compilerOptions": {
-    "target": "ES2023",
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
-    "strict": true,
-    "noEmit": true,
-    "skipLibCheck": true,
-    "types": ["node"]
+    "target": "es2024", "module": "NodeNext", "moduleResolution": "NodeNext",
+    "allowImportingTsExtensions": true, "rewriteRelativeImportExtensions": true,
+    "verbatimModuleSyntax": true, "strict": true, "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true, "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true, "noUnusedLocals": true,
+    "noUnusedParameters": true, "skipLibCheck": true, "types": ["node"],
+    "lib": ["es2024", "DOM"], "noEmit": true
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts"],
-  "exclude": ["src/client"]
+  "include": ["src/**/*.ts", "tests/**/*.ts"]
 }

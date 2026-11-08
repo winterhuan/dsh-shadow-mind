@@ -1,211 +1,169 @@
+---
+description: "Configure independent read-only reviews of DSH tasks with Markdown responsibilities, background checks, and completion feedback."
+kind: "package-bundle"
+---
+
 # dsh-shadow-mind
 
-Parallel cognitive runtime for [DeepSeek Harness](https://github.com/deepseek-ai/dsh) (DSH / Cordis).
+English | [中文](README.zh.md)
 
-This project is a DSH plugin implementation of [pi-shadow-mind](https://github.com/liuzhengdongfortest/pi-shadow-mind). The plugin runs multiple "Shadow Mind" agents beside the main agent to provide independent reviews, fact-checking, and parallel cognitive work: after each main-agent turn, a heartbeat scheduler randomly activates configured shadows, each with its own responsibility, tool allowlist, and run timeout.
+## Summary
 
-> **Status**: functional prototype. Core heartbeat scheduling, restricted-tool shadow agents, per-run timeouts, lifecycle cleanup, and management tools work end-to-end. See [Known Limitations](#known-limitations) below.
+Review a task independently while the main agent works and before its turn ends. Define each review responsibility in Markdown; actionable findings return to the main agent with evidence references and a child-session address. Use `/shadow` to inspect, pause, resume, or request a review. This bundle targets DSH `0.2.2-rc.1` and adds model cost and completion latency.
 
-## Relation to pi-shadow-mind
+## Table of Contents
 
-- Original project: https://github.com/liuzhengdongfortest/pi-shadow-mind
-- This repository is a DSH plugin (dsh-plugin) implementation of pi-shadow-mind: the shadow-mind concepts are reimplemented on the DSH/Cordis runtime as an independent package — not a fork, and not a line-by-line translation.
-- DSH uses different primitives (continuable subagents, native background notices, and the Cordis plugin model), so the implementation adapts the original design to them.
+- [Use this package](#use-this-package)
+- [Understand the implementation](#understand-the-implementation)
+- [Further Exploration](#further-exploration)
+- [Model Experience](#model-experience)
+- [Known Limitations and Deferred Work](#known-limitations-and-deferred-work)
+- [Dev Note](#dev-note)
 
-## Features
+-----
 
-- **Heartbeat scheduling**: After each main-agent turn, randomly activates configured Shadow Minds.
-- **Restricted-tool shadows**: Each shadow receives a sanitized main-session trajectory and an explicit tool allowlist. The default allowlist is read-only; configuring other tools can broaden that access.
-- **Per-run timeout**: `timeout_seconds` (or the config default) bounds each shadow run; an expired run is interrupted and its slot is released.
-- **Lifecycle cleanup**: `subagent/end` removes finished shadow runs, so slots and `active` counts stay accurate within an epoch.
-- **Management tools**: Create, update, delete, list, enable, and disable shadow definitions via model tools. Persistent writes are gated behind the DSH approval service when one is mounted.
-- **Config tools**: Read and write the global configuration via model tools (writes validate the merged result before persisting).
-- **Pause/resume/epoch**: `/shadow pause` and `/shadow resume`; pausing also aborts running shadows. New user input increments the epoch and cancels running shadows from the previous epoch.
-- **Auto toggle**: `/shadow auto on|off` actually enables/disables heartbeat activation.
-- **Tool-call argument redaction**: Tool-call arguments are redacted before being forwarded to shadows (credentials are not leaked). Tool results are summarized.
+<a id="use-this-package"></a>
+## Use this package
 
-## Installation
+Use Node.js `^22.19.0 || >=24`, pnpm `11.7.0`, and exactly DSH `0.2.2-rc.1`. The profile must supply native Agent Presets, the `spawn` provider, filesystem services, and a configured model. The standard Web profile provides the required services; a custom headless profile must compose them explicitly.
 
-DSH plugins are loaded through a Cordis composition (profile or agent preset).
+### Install a local build
 
-### 1. Install the package into a DSH profile
+Run these commands from this package directory. Keep the same shell so the temporary `DSH_HOME` remains selected; this profile has separate sessions and configuration.
 
-```bash
-dsh plugin --profile web add @winterchenhuan/dsh-shadow-mind@latest
+```sh
+pnpm install --frozen-lockfile
+pnpm run build
+export DSH_HOME="$(mktemp -d)"
+dsh --profile shadow-dev --from-default-profile web --dump-config > "$DSH_HOME/default-profile.yml"
+dsh plugin --profile shadow-dev add "$PWD"
+mkdir -p "$DSH_HOME/shadow-minds"
+cp examples/completion.md "$DSH_HOME/shadow-minds/completion.md"
 ```
 
-For local development, build the package before adding the directory so `dist/index.js` exists:
+The bundle activates the scheduler, `/shadow` command, and review preset together. No definitions are installed automatically. The copied completion example enables one final check per human task; copy [architecture.md](examples/architecture.md) to the same directory to opt into probabilistic background checks.
 
-```bash
-cd /path/to/dsh-shadow-mind
-npm install
-npm run build
-dsh plugin --profile web add /path/to/dsh-shadow-mind
+Before opening Web, select an appropriate model and workspace in the development profile. The following patch keeps default workspace files inside the temporary home.
+
+```sh
+cat > "$DSH_HOME/workspace.patch.yml" <<'YAML'
+- id: workspace-controller
+  config:
+    documentsDirectory: !!js dshHomePath('documents')
+YAML
+dsh --profile shadow-dev --patch "$DSH_HOME/workspace.patch.yml" --host 127.0.0.1 --port 0 --no-open
 ```
 
-The profile stores the local package as a path dependency; rerun `npm run build` after source changes, then restart DSH.
+Open the local URL printed by DSH and send a task. Rebuild, restart the development process, and hard-refresh Web after source edits. Remove this layer with `dsh plugin --profile shadow-dev remove dsh-shadow-mind`.
 
-The current repository version is `0.1.7`. The `@latest` suffix makes the add command re-resolve to the newest published version; a bare `add <pkg>` keeps the range already recorded in the profile (e.g. `^0.1.6`) and the lockfile-pinned version, so it will not upgrade an existing installation. To test an unpublished checkout, use the local-directory procedure above.
+### Control reviews
 
-The package ships a `cordis.patch.yml`. The profile loader reads the package's `dsh.bundle.patch` manifest and applies it automatically; no manual profile `cordis.patch.yml` editing is needed.
+Commands act on the current root session. The command result shows recent outcomes and child-session addresses; Web's native subagent menu opens the review transcript.
 
-### 2. Restart DSH
-
-Restart DSH and the plugin will be loaded. The package exports a default Cordis plugin factory from `dist/index.js`.
-
-## Configuration
-
-Global configuration is a user-settings namespace: the single source of truth is the `shadow-mind:` section of `~/.dsh/settings.yaml`. It can be edited from three places that stay in sync:
-
-- **Settings page**: DSH Web 设置页的「可配置插件」里有一张 Shadow Mind 卡片，按字段编辑、保存即写入（支持覆盖标记与重置）。
-- **Model tools**: `write_shadow_config` / `read_shadow_config`（写入前需要用户批准）。
-- **Manual edit**: directly edit the `shadow-mind:` section of `~/.dsh/settings.yaml`; changes are picked up live.
-
-Shadow definitions (Markdown) still live in:
-
-```
-$DSH_HOME/agent/shadow-minds/
-├── grounded-reviewer.md
-├── requirement-keeper.md
-└── ...
-```
-
-`$DSH_HOME` defaults to `~/.dsh` (honoring the `DSH_HOME` environment variable), so the default location is `~/.dsh/agent/shadow-minds/`.
-
-Example `settings.yaml` section (fields absent from the section fall back to schema defaults):
-
-```yaml
-shadow-mind:
-  heartbeatProbability: 0.33
-  maxParallelShadows: 2
-  defaultShadowTimeoutSeconds: 120
-  defaultThinkingLevel: low
-```
-
-Field reference:
-
-| Field | Default | Meaning |
-| --- | --- | --- |
-| `heartbeatProbability` | `0.333…` | Per-turn activation probability per eligible shadow, `0..1` |
-| `maxParallelShadows` | `2` | Concurrently running shadows, `1..8` |
-| `defaultShadowTimeoutSeconds` | `300` | Per-shadow run timeout when the definition sets none |
-| `headlessDrainTimeoutSeconds` | `120` | Grace window for settling children at shutdown |
-| `resultBatchWindowMs` | `400` | Window coalescing multiple reports into one wakeup |
-| `defaultShadowModel` | *(unset → main model)* | Model used when a shadow declares none |
-| `defaultThinkingLevel` | `low` | `minimal` / `low` / `medium` / `high` |
-| `randomSeed` | *(unset → random)* | Deterministic heartbeat RNG seed; applies to the next session |
-
-### Legacy config.json migration
-
-An old `$DSH_HOME/agent/shadow-minds/config.json` is imported into the settings section automatically on the first startup after upgrading, then renamed to `config.json.migrated` so it cannot resurrect stale values later. A file that fails validation is renamed aside too — the plugin keeps running on defaults and the values survive inside the `.migrated` copy.
-
-The timeout and heartbeat fields are active. `headless_drain_timeout_seconds`, `result_batch_window_ms`, and `default_thinking_level` are accepted for configuration compatibility but are not active yet; see [Known Limitations](#known-limitations).
-
-Example shadow definition `grounded-reviewer.md`:
-
-```md
----
-id: grounded-reviewer
-name: Project Grounding Checker
-enabled: true
-activation_probability: 0.6
-run_with_model: openai/gpt-5-mini
-thinking_level: low
-tools:
-  - read
-  - grep
-  - glob
----
-
-Check whether the main agent's claims are supported by the current workspace. If nothing is worth reporting, reply exactly: NOT_RELEVANT.
-```
-
-## Usage
-
-After installation, restart the target profile and start DSH Web normally:
-
-```bash
-dsh web
-```
-
-(`dsh --profile web` is equivalent.)
-
-In the Web UI, continue using the main agent. Shadow activations happen after main-agent turns according to the configured probability. Use `/shadow status` first to confirm the plugin loaded and to see registry/config diagnostics.
-
-Typical flow:
-
-1. `/shadow status` — confirm the plugin loaded and see the current state.
-2. `/shadow list` — see which shadows are defined and enabled.
-3. `/shadow probe grounded-reviewer` — manually run one shadow once to check it works.
-4. Shadows then activate automatically after main-agent turns (heartbeat), as long as auto mode is ON.
-
-## Commands
-
-Use the single `/shadow` umbrella command:
-
-```
+```text
 /shadow status
-/shadow probe <id> [tools]
-/shadow list
-/shadow clean
-/shadow auto <on|off>
+/shadow check
+/shadow check completion
 /shadow pause
 /shadow resume
 ```
 
-| Command | Purpose |
-|---|---|
-| `/shadow status` | Show the current state: active/paused, auto mode, epoch, running shadow count, event count, plus config/registry diagnostics. |
-| `/shadow probe <id> [tools]` | Manually run one shadow once without waiting for a heartbeat. `<id>` selects the shadow (omit it to pick a random enabled one). Optional comma-separated `tools` overrides that shadow's tool allowlist. |
-| `/shadow list` | List all shadow definitions: enabled/disabled, activation probability, and tool allowlist. |
-| `/shadow clean` | Abort all currently running shadows and release their slots. |
-| `/shadow auto <on\|off>` | Enable/disable heartbeat activation. `off` stops random activations; already-running shadows are not affected. |
-| `/shadow pause` / `/shadow resume` | Pause/resume the whole shadow system for the current session. Pausing also aborts running shadows. A new user message (new epoch) also stops shadows left over from the previous epoch. |
+`check` waits for all enabled definitions or the selected id. It requires a previous human task and refuses a concurrent batch or a paused session. Manual checks ignore trigger probability and count as the final check for that task. `pause` cancels active reviews and waits for child cleanup; `resume` enables future triggers without replaying old work. Pause state, claimed checks, and recent outcomes survive session restoration.
 
-## Management Tools
+### Define responsibilities
 
-These are registered as model-callable tools:
+Store top-level `.md` files in `$DSH_HOME/shadow-minds`. The scheduler reloads them for each batch, so edits apply to later activations. Start with the shipped examples; their YAML frontmatter accepts these fields.
 
-- `list_shadows`
-- `create_shadow`
-- `update_shadow`
-- `delete_shadow`
-- `enable_shadow`
-- `disable_shadow`
-- `trigger_shadow`
-- `read_shadow_config`
-- `write_shadow_config`
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `id`, `name` | Filename without `.md` | Stable lowercase id and display name. |
+| `enabled` | `true` | Disable a responsibility without deleting it. |
+| `trigger` | `[final_response]` | List containing `heartbeat`, `final_response`, or both. |
+| `activation_probability` | `0.1` | Probability per eligible heartbeat; final and manual checks always run. |
+| `activation_tools` | `[]` | Optional exact tool names that qualify a completed step for a heartbeat. |
+| `run_with_model` | Parent model | Explicit `provider/model`; both must be available to the profile. |
+| `reasoning_effort` | Inherited setting | Optional model-supported reasoning setting. |
 
-## Known Limitations
+The Markdown body defines the review responsibility. Unsupported fields, including `tools`, are errors; a definition cannot grant extra tools. Invalid files remain visible in status, and every definition sharing a duplicate id is excluded. Exceeding the directory-wide definition limit rejects the batch.
 
-The following areas are not fully implemented yet:
+### Bound cost and diagnose failures
 
-| Area | Status |
-|---|---|
-| Independent Shadow AgentSession | **Partial**: DSH continuable subagents are used instead of a separate agent session. |
-| `report_to_main` tool | **Missing**: DSH native background notices are used instead. Report batching and `steer`/`followUp` are not yet replicated. |
-| Tool allowlist resolution | **Simplified**: missing-tool reporting and `report_to_main` injection are not implemented. |
-| Per-shadow model auth check | **Missing**: `run_with_model` is passed as `agentOptions`, but auth validation is not performed. |
-| Per-shadow `timeout_seconds` | **Enforced**: each run is bounded by `timeout_seconds` or `default_shadow_timeout_seconds`; expired runs are interrupted and their slots released. |
-| Per-shadow `thinking_level` | **Not applied**: DSH uses reasoning effort, which is not yet mapped. |
-| Shutdown drain / headless mode | **Missing**: no headless drain on process shutdown. |
-| UI status panel / message renderer | **Partial**: a Client indicator exists in the dynamic prototype; the real package currently only exposes `/shadow`. |
-| Debug session logs | **Not needed**: shadow runs are DSH continuable subagents, and DSH Web already shows their execution (trajectory, tool calls, results) live. The `debug` frontmatter field was removed accordingly. |
-| Test suite | **Minimal**: vitest suite covers the pure scheduling, parsing, serialization, config, and drain logic; no harness integration tests yet. |
+Override the `shadow-mind-runtime` row in a profile patch to change these settings; [config.ts](src/config.ts) owns validation and allowed ranges.
 
-See [DESIGN.md](DESIGN.md) for the project's design goals; some of them are not fully implemented yet.
+| Setting | Default | Effect |
+| --- | --- | --- |
+| `definitionsDirectory` | `$DSH_HOME/shadow-minds` | Responsibility files. |
+| `maxParallel` | `2` | Concurrent reviews across this plugin instance. |
+| `timeoutSeconds` | `120` | Per-review deadline including slot waiting and child startup. |
+| `maxHeartbeatRunsPerTask` | `4` | Attempt budget per human task; skipped or failed attempts consume it. |
+| `maxDefinitions` | `16` | Maximum Markdown files in the directory. |
+| `maxDefinitionBytes` | `16384` | Maximum bytes per definition. |
+| `maxTrajectoryChars`, `maxEntryChars` | `48000`, `8000` | Total trajectory and per-entry text limits. |
+| `maxReportChars` | `4000` | Maximum accepted finding text per reviewer. |
+| `maxOutputTokens` | `4096` | Requested child output budget. |
 
-## Development
+Background checks skip when capacity is occupied; final and manual checks queue. New human input cancels reviews of the previous task, and their late reports are discarded. Status distinguishes `silent`, `not_relevant`, `failed`, `timeout`, `cancelled`, and `skipped`; an infrastructure failure never counts as a clean review. Open the child transcript for native errors. For an oversized-context error, reduce trajectory limits or choose a model with a larger context window.
 
-```bash
-npm install
-npm run typecheck
-npm run verify   # typecheck + unit tests
-npm run build
-```
+-----
 
-`npm pack` runs `prepack` (i.e. `npm run build`) automatically, so a release tarball always contains `dist/index.js`.
+<a id="understand-the-implementation"></a>
+## Understand the implementation
 
-## License
+<details>
+<summary>Scheduling, evidence, and development — click to expand</summary>
 
-MIT
+[The scheduler](src/index.ts) observes tool-bearing `step/end` events and intercepts `agent/turn-stopping`. It joins pending background work before claiming a final batch, then admits findings as a relay message. A claim belongs to the latest real user message, so the main agent's correction does not start another final review.
+
+Each activation starts a fresh native child with the [review preset](cordis.patch.yml), project instructions, a bounded [effective trajectory](src/trajectory.ts), and structured output. Replacements in the session surface are respected. Reasoning and raw tool-result bodies are omitted; the child must inspect relevant files independently. [The policy](src/review-policy.ts) filters advertised tools and rejects disallowed execution. It wraps the instruction loader so its budget check includes newly admitted project instructions.
+
+[Result validation](src/report.ts) accepts `report`, `silent`, or `not_relevant`. A report requires actionable text and at least one displayed event sequence reference; references identify supplied observations, not independently verified truth. A batch combines accepted findings and deduplicates identical text. [Session records](src/records.ts) retain metadata without changing model context; accepted feedback is an ordinary durable message. The plugin never replays unfinished reviews after restart.
+
+Run `pnpm run typecheck`, `pnpm run build`, `pnpm test`, and `pnpm run check:package` before release. Tests use the production AgentLoop, preset composition, and spawn provider with a deterministic adapter. [The acceptance adapter](tests/fixtures/keyless-model.mjs) also exercises a real Web profile without model-generation API calls; it does not measure review quality.
+
+</details>
+
+-----
+
+<a id="further-exploration"></a>
+## Further Exploration
+
+[Completion example](examples/completion.md) and [architecture example](examples/architecture.md) provide editable responsibilities. [Package metadata](package.json) declares the bundle exports and exact DSH compatibility. [pi-shadow-mind](https://github.com/liu-zhengdong/pi-shadow-mind) inspired the independent-review approach; this implementation uses DSH's native sessions and activations.
+
+-----
+
+<a id="model-experience"></a>
+## Model Experience
+
+### Review context and feedback
+
+#### What the model sees
+
+The main model receives no new tools or persistent prompt prefix. It receives actionable findings as `shadow-report` relay messages with reviewer identity, child-session address, and event references. Each fresh child receives its responsibility, quoted observations, project instructions, and only `read`, `grep`, `glob`, and `structured_output`. Human command results and scheduler metadata stay outside model context.
+
+#### Token effect
+
+Every activation adds a separate model request and may add read-tool turns. Trajectory, definitions, reports, output, concurrency, and deadlines are bounded. Before each child request, the policy compares serialized UTF-8 bytes plus output reserve with advertised context capacity. This conservative heuristic is not a tokenizer or a monetary limit; a missing model context limit prevents that comparison.
+
+#### KV Cache effect
+
+The main request prefix remains unchanged until ordinary feedback extends its history. Review children share stable preset text but receive fresh task-specific evidence; cross-child cache reuse depends on the provider. This plugin promises no cache-hit improvement.
+
+## Known Limitations and Deferred Work
+
+<a id="known-limitations-and-deferred-work"></a>
+
+- Final checks delay turn completion, but streamed answer text can appear before review finishes. Findings invite a correction; they do not hide or replace the first answer.
+- Read-only tool exposure is not an operating-system sandbox. The configured filesystem provider controls readable paths, and custom implementations under allowed tool names remain trusted.
+- Background evidence is a snapshot of a live workspace. Citations and byte budgets do not prove semantic correctness, snapshot isolation, or complete coverage.
+- The plugin requires the native local `spawn` provider and preset composition. It has no custom panel, definition-management tools, or automatic replay of interrupted reviews. Session-format migrations may omit plugin metadata.
+- Real-model review quality, Linux/Windows acceptance, and custom headless composition have not been validated.
+
+<a id="dev-note"></a>
+### Dev Note
+
+<details>
+<summary>Working context for maintainers — click to expand</summary>
+
+None.
+
+</details>

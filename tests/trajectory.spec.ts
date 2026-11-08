@@ -1,103 +1,30 @@
-import { describe, expect, it } from "vitest";
-import { serializeTrajectory } from "../src/trajectory.js";
-import type { TrajectoryEventLike } from "../src/trajectory.js";
+import { expect, it } from 'vitest'
+import { Session, SessionId } from '@deepseek-ai/dsh-session'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { Config } from '../src/config.ts'
+import { captureTrajectory } from '../src/trajectory.ts'
 
-function event(partial: TrajectoryEventLike): TrajectoryEventLike {
-  return { type: partial.type, data: partial.data };
-}
+it('respects a partial context replacement and preserves unrelated visible constraints', () => {
+  const session = Session.create(SessionId('trajectory'))
+  const append = (text: string) => session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text }] }), { surfaceOp: 'append' })
+  append('Keep the public API stable.')
+  const removed = append('Old detailed discussion no longer present in model context.')
+  append('Latest task.')
+  session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Compacted summary.' }] }),
+    { surfaceOp: { op: 'replace', startSeq: removed.seq, endSeq: removed.seq }, sourceEventSeqs: [removed.seq] })
+  const trajectory = captureTrajectory(session, Config({ definitionsDirectory: '/unused' }))
+  expect(trajectory.text).toContain('Keep the public API stable.')
+  expect(trajectory.text).toContain('Compacted summary.')
+  expect(trajectory.text).not.toContain('Old detailed discussion')
+  expect(trajectory.refs).not.toContain(removed.seq)
+})
 
-function userEvent(text: string, kind = "user"): TrajectoryEventLike {
-  return event({ type: "user/message", data: { role: "user", content: [{ type: "text", text }], source: { kind } } });
-}
-
-function assistantEvent(blocks: unknown[]): TrajectoryEventLike {
-  return event({
-    type: "assistant/message",
-    data: {
-      turn: 1,
-      step: 1,
-      message: {
-        role: "assistant",
-        content: blocks,
-        source: { kind: "model", provider: "p", model: "m" },
-      },
-    },
-  });
-}
-
-function toolCall(id: string, name: string, args: string): unknown {
-  return { type: "tool-call", id, name, arguments: args };
-}
-
-function toolResultEvent(callId: string, name: string, text: string, isError = false): TrajectoryEventLike {
-  return event({
-    type: "tool/result",
-    data: {
-      turn: 1,
-      step: 1,
-      message: {
-        role: "user",
-        content: [{ type: "tool-result", toolCallId: callId, content: [{ type: "text", text }], isError }],
-        source: { kind: "tool", callId },
-      },
-    },
-  });
-}
-
-describe("serializeTrajectory", () => {
-  it("flattens user and assistant text into labeled lines", () => {
-    const text = serializeTrajectory([
-      userEvent("design a permission system"),
-      assistantEvent([{ type: "text", text: "Let me check the current code." }]),
-    ]);
-    expect(text).toContain("USER: design a permission system");
-    expect(text).toContain("MAIN: Let me check the current code.");
-  });
-
-  it("labels plugin-injected context as CONTEXT", () => {
-    const text = serializeTrajectory([userEvent("<system-reminder>follow rules</system-reminder>", "plugin")]);
-    expect(text).toContain("CONTEXT: <system-reminder>follow rules</system-reminder>");
-    expect(text).not.toContain("USER:");
-  });
-
-  it("correlates tool calls with summarized results on one line", () => {
-    const text = serializeTrajectory([
-      assistantEvent([toolCall("call_1", "read", '{"path":"src/auth.ts"}')]),
-      toolResultEvent("call_1", "read", "line one\nline two"),
-    ]);
-    expect(text).toContain("TOOL: read({ path: [redacted] }) · 2 lines · line one");
-    expect(text).not.toContain("TOOL RESULT:");
-  });
-
-  it("skips reasoning blocks but keeps surrounding text", () => {
-    const text = serializeTrajectory([
-      assistantEvent([
-        { type: "reasoning", text: "internal deliberation" },
-        { type: "text", text: "Visible answer." },
-      ]),
-    ]);
-    expect(text).toContain("MAIN: Visible answer.");
-    expect(text).not.toContain("internal deliberation");
-  });
-
-  it("emits a standalone TOOL RESULT line for an uncorrelated result", () => {
-    const text = serializeTrajectory([toolResultEvent("orphan", "grep", "a.ts:1: hit")]);
-    expect(text).toContain("TOOL RESULT:");
-    // No matching tool-call in the window means no tool name; the generic
-    // content description is shown instead.
-    expect(text).toContain("text");
-  });
-
-  it("renders an empty list as an empty string", () => {
-    expect(serializeTrajectory([])).toBe("");
-  });
-
-  it("ignores non-text blocks and malformed events without throwing", () => {
-    const text = serializeTrajectory([
-      userEvent("hi"),
-      { type: "assistant/message", data: { message: { content: "not-an-array" } } },
-      { type: "unknown/event", data: { anything: true } },
-    ]);
-    expect(text).toBe("USER: hi");
-  });
-});
+it('bounds oversized text and marks omissions', () => {
+  const session = Session.create(SessionId('bounded'))
+  for (let index = 0; index < 20; index++) session.append('user/message', createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: `Message ${index}: ${'x'.repeat(4000)}` }] }), { surfaceOp: 'append' })
+  const trajectory = captureTrajectory(session, Config({ definitionsDirectory: '/unused', maxTrajectoryChars: 1024, maxEntryChars: 256 }))
+  expect(trajectory.text.length).toBeLessThanOrEqual(1024)
+  expect(trajectory.text).toContain('[truncated]')
+  expect(trajectory.omitted).toBeGreaterThan(0)
+  expect(trajectory.text).toContain('Message 19:')
+})
