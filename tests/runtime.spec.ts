@@ -1,12 +1,55 @@
 import { describe, expect, it, vi } from 'vitest'
 import { pluginRecordOf, Session } from '@deepseek-ai/dsh-session'
-import { savedState } from '../src/records.ts'
+import { record, savedState } from '../src/records.ts'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { defineTool } from '@deepseek-ai/dsh-tools'
+import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import { createRandom } from '../src/random.ts'
 import { harness, reportResponse, textResponse, toolResponse } from './fixtures/harness.ts'
 
 describe('native review lifecycle', () => {
+  it('reports the full session record count while bounding recent event payloads', async () => {
+    const { agent, ctx } = await harness((_options, child) => child
+      ? toolResponse('structured_output', { status: 'silent', content: '', refs: [] }) : textResponse('Done.'))
+    for (let index = 0; index < 60; index += 1) record(agent.session, { kind: 'pause', paused: index % 2 === 0 })
+    const snapshot = await ctx.shadowMind.snapshot(agent.id, new AbortController().signal)
+    expect(snapshot.eventCount).toBe(60)
+    expect(snapshot.recentEvents).toHaveLength(50)
+  })
+
+  it('re-seeds scheduling randomness after a volatile randomSeed update', async () => {
+    const { ctx } = await harness((_options, child) => child
+      ? toolResponse('structured_output', { status: 'silent', content: '', refs: [] }) : textResponse('Done.'), { randomSeed: 0 }, [])
+    const runtime = ctx.shadowMind
+    const internal = runtime as unknown as { random: () => number }
+    Object.assign(runtime.config, { randomSeed: { get: () => 17 } })
+    ctx.emit('loader/volatile-update', [['randomSeed']])
+    expect(internal.random()).toBe(createRandom(17)())
+  })
+
+  it('registers the original management tools on the root agent', async () => {
+    const { agent, ctx } = await harness((_options, child) => child ? toolResponse('structured_output', { status: 'silent', content: '', refs: [] }) : textResponse('Done.'))
+    await ctx.shadowMind.status(agent)
+    expect(ctx.tools.schemas(agent).map(tool => tool.name)).toEqual(expect.arrayContaining([
+      'list_shadows', 'create_shadow', 'update_shadow', 'enable_shadow', 'disable_shadow', 'delete_shadow',
+      'trigger_shadow', 'read_shadow_config', 'write_shadow_config',
+    ]))
+  })
+
+  it('runs an explicit-tool definition as a worker and relays report_to_main', async () => {
+    const { agent, send, ctx, directory } = await harness((_options, child) => child
+      ? toolResponse('report_to_main', { content: 'Worker verified the requested change.', refs: [] })
+      : textResponse('Done.'))
+    await writeFile(join(directory, 'completion.md'), '---\nid: completion\ntrigger: [final_response]\ntools: [list_shadows]\n---\nVerify the requested change.\n')
+    send()
+    await agent.whenIdle()
+    const reports = agent.session.deriveMessages().filter(message => message.source.kind === 'shadow-report')
+    if (reports.length === 0) throw new Error(await ctx.shadowMind.status(agent))
+    expect(reports).toHaveLength(1)
+    expect(JSON.stringify(reports[0])).toContain('Worker verified the requested change.')
+  })
+
   it('delivers one structured completion report and lets the root revise without recursive reviews', async () => {
     const { agent, send, adapter, ctx } = await harness((options, child) => child ? reportResponse(options) : textResponse('Task result.'))
     send()
@@ -16,11 +59,43 @@ describe('native review lifecycle', () => {
     expect(adapter.requests.filter(request => request.tools?.some(tool => tool.name === 'structured_output'))).toHaveLength(1)
     const childRequest = adapter.requests.find(request => request.tools?.some(tool => tool.name === 'structured_output'))
     expect(childRequest?.tools?.map(tool => tool.name).sort()).toEqual(['glob', 'grep', 'read', 'structured_output'])
+    expect(childRequest?.reasoningEffort).toBeUndefined()
     expect(adapter.requests).toHaveLength(3)
     expect(ctx.agents.list().map(item => item.id)).toEqual([agent.id])
     expect(savedState(agent.session).completionClaimed).toBe(true)
     const restored = Session.create(agent.id, agent.session.snapshotEvents(), agent.session.header)
     expect(savedState(restored)).toEqual(savedState(agent.session))
+  })
+
+  it('selects the configured default reasoning effort through the child Agent model API', async () => {
+    const { agent, send, adapter } = await harness((_options, child) => child
+      ? toolResponse('structured_output', { status: 'silent', content: '', refs: [] }) : textResponse('Done.'),
+    { defaultThinkingLevel: 'high' }, ['completion'], {
+      efforts: [
+        { id: ReasoningEffortId('low'), name: 'Low' },
+        { id: ReasoningEffortId('high'), name: 'High' },
+      ],
+    })
+    send()
+    await agent.whenIdle()
+    const childRequest = adapter.requests.find(request => request.tools?.some(tool => tool.name === 'structured_output'))
+    expect(childRequest?.reasoningEffort).toBe('high')
+  })
+
+  it('lets a definition override the global thinking level through the child Agent model API', async () => {
+    const { agent, send, adapter, directory } = await harness((_options, child) => child
+      ? toolResponse('structured_output', { status: 'silent', content: '', refs: [] }) : textResponse('Done.'),
+    { defaultThinkingLevel: 'low' }, ['completion'], {
+      efforts: [
+        { id: ReasoningEffortId('low'), name: 'Low' },
+        { id: ReasoningEffortId('high'), name: 'High' },
+      ],
+    })
+    await writeFile(join(directory, 'completion.md'), '---\ntrigger: [final_response]\nthinking_level: high\n---\nCheck completion.')
+    send()
+    await agent.whenIdle()
+    const childRequest = adapter.requests.find(request => request.tools?.some(tool => tool.name === 'structured_output'))
+    expect(childRequest?.reasoningEffort).toBe('high')
   })
 
   it('keeps silent reviews out of model context and persists their outcome', async () => {
@@ -56,17 +131,15 @@ describe('native review lifecycle', () => {
     const { agent, send, ctx, directory, workspace, adapter } = await harness((_options, child) => child
       ? toolResponse('structured_output', { status: 'silent', content: '', refs: [] }) : textResponse('Done.'))
     await writeFile(join(workspace, 'AGENTS.md'), 'Project rule. '.repeat(2000))
-    await writeFile(join(directory, 'completion.md'), '---\nrun_with_model: fixture/small\n---\nCheck completion.')
+    await writeFile(join(directory, 'completion.md'), '---\ntrigger: [final_response]\nrun_with_model: fixture/small\n---\nCheck completion.')
     vi.spyOn(adapter, 'resolveModel').mockImplementation((provider, model) => Promise.resolve({
       provider, id: model, name: model, context: { contextWindow: model === 'small' ? 20000 : 200000 },
     }))
-    const errors: string[] = []
-    ctx.on('agent/error', ({ error }) => errors.push(String(error)))
     send()
     await agent.whenIdle()
     expect(adapter.requests).toHaveLength(1)
-    expect(errors.join('\n')).toContain('conservative context budget')
-    expect(await ctx.shadowMind.status(agent)).toContain('completion: failed')
+    const status = await ctx.shadowMind.status(agent)
+    expect(status).toContain('completion: failed')
     expect(ctx.agents.list()).toHaveLength(1)
   })
 
@@ -145,7 +218,7 @@ describe('native review lifecycle', () => {
       if (rootCalls++ === 0) { yield* toolResponse('probe', {}); return }
       if (rootCalls === 2) await childStarted.promise
       yield* textResponse('Done.')
-    }, { maxHeartbeatRunsPerTask: 1 }, [])
+    }, { maxHeartbeatRunsPerTask: 1, heartbeatProbability: 1 }, [])
     await writeFile(join(directory, 'background.md'), '---\ntrigger: [heartbeat]\nactivation_probability: 1\nactivation_tools: [probe]\n---\nReview repository changes.')
     ctx.tools.register(defineTool({ name: 'probe', description: 'Read deterministic test evidence.', parameters: {},
       output: { schema: { type: 'boolean' }, render: () => [{ type: 'text', text: 'Evidence read.' }] }, execute: async () => true }))
@@ -179,7 +252,7 @@ describe('native review lifecycle', () => {
         if (options.signal?.aborted) resolve()
         else options.signal?.addEventListener('abort', () => resolve(), { once: true })
       })
-    })
+    }, { headlessDrainTimeoutSeconds: 1 })
     send()
     await entered.promise
     await runtime.dispose()

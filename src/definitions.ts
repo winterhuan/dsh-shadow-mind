@@ -1,82 +1,89 @@
-/** Markdown responsibilities are reloaded for each batch; invalid files stay visible as diagnostics. */
+/** Persistent, human-readable Shadow responsibilities and capability grants. */
 import { mkdir, open, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { parseDocument } from 'yaml'
 import z from '@deepseek-ai/schemastery'
-import type { Config } from './config.ts'
+import { resolveConfig, type Config, type ConfigInput, type ResolvedConfig } from './config.ts'
 
-/** Automatic activation point; manual reviews ignore this filter. */
 export type Trigger = 'heartbeat' | 'final_response'
 
 const fields = z.object({
   id: z.string().pattern(/^[a-z0-9][a-z0-9_-]{0,63}$/u).required(),
   name: z.string().max(100).required(),
   enabled: z.boolean().default(true),
-  trigger: z.array(z.union(['heartbeat', 'final_response'] as const)).default(['final_response']),
-  activation_probability: z.number().min(0).max(1).default(0.1),
-  activation_tools: z.array(z.string()).default([]),
+  debug: z.boolean().default(false),
+  trigger: z.array(z.union(['heartbeat', 'final_response'] as const)).default(['heartbeat']),
+  activation_probability: z.number().min(0).max(1).default(0.3),
+  active_for_models: z.array(z.string()).default(['*']),
   run_with_model: z.string(),
-  reasoning_effort: z.string(),
+  thinking_level: z.string(),
+  timeout_seconds: z.number().min(1).max(3600),
+  final_response_rounds: z.number().step(1).min(0).max(100),
+  activation_tools: z.array(z.string()).default([]),
+  tools: z.array(z.string()).default([]),
 })
-const allowedFields = new Set(['id', 'name', 'enabled', 'trigger', 'activation_probability', 'activation_tools', 'run_with_model', 'reasoning_effort'])
 
-/** One immutable responsibility snapshot, with an optional explicit model route. */
+const allowedFields = new Set(['id', 'name', 'enabled', 'debug', 'trigger', 'activation_probability',
+  'active_for_models', 'run_with_model', 'thinking_level', 'timeout_seconds', 'final_response_rounds',
+  'activation_tools', 'tools'])
+
 export interface Definition {
   readonly id: string
   readonly name: string
   readonly enabled: boolean
+  readonly debug: boolean
   readonly triggers: readonly Trigger[]
   readonly probability: number
-  readonly activationTools: readonly string[]
-  readonly body: string
+  readonly activeForModels: readonly string[]
   readonly route?: { readonly provider: string; readonly model: string }
-  readonly reasoningEffort?: string
+  readonly thinkingLevel?: string
+  readonly timeoutSeconds?: number
+  readonly finalResponseRounds: number
+  readonly activationTools: readonly string[]
+  readonly tools: readonly string[]
+  readonly body: string
 }
 
-/** Usable definitions and file-specific failures from one directory read. */
 export interface Catalog {
   readonly definitions: readonly Definition[]
   readonly diagnostics: readonly string[]
 }
 
-/**
- * Parse frontmatter and reject unsupported capability fields.
- * @param text - Complete Markdown file.
- * @param filename - File basename used when id or name is omitted.
- * @returns Validated definition; malformed metadata or empty responsibilities throw.
- */
 export function parseDefinition(text: string, filename: string): Definition {
   const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)([\s\S]*)$/u.exec(text)
-  if (match === null) throw new Error('expected YAML frontmatter followed by a review responsibility')
+  if (match === null) throw new Error('expected YAML frontmatter followed by a responsibility')
   const document = parseDocument(match[1] ?? '', { uniqueKeys: true })
   if (document.errors.length > 0) throw new Error(document.errors.map(error => error.message).join('; '))
   const input: unknown = document.toJS({ maxAliasCount: 20 })
   if (input === null || typeof input !== 'object' || Array.isArray(input)) throw new Error('frontmatter must be an object')
   for (const key of Object.keys(input)) if (!allowedFields.has(key)) throw new Error(`unsupported field: ${key}`)
-  const values = fields({ id: filename, name: filename, ...input })
+  const value = fields({ id: filename, name: filename, ...input })
   const body = (match[2] ?? '').trim()
-  if (body === '') throw new Error('review responsibility must not be empty')
-  if (values.trigger.length === 0) throw new Error('trigger must contain heartbeat or final_response')
+  if (body === '') throw new Error('responsibility must not be empty')
+  if (value.trigger.length === 0) throw new Error('trigger must contain heartbeat or final_response')
+  if (value.activation_tools.some(tool => !tool.trim())) throw new Error('activation_tools must contain non-empty names')
+  if (value.tools.some(tool => !tool.trim())) throw new Error('tools must contain non-empty names')
   let route: Definition['route']
-  if (values.run_with_model !== undefined) {
-    const separator = values.run_with_model.indexOf('/')
-    if (separator <= 0 || separator === values.run_with_model.length - 1) throw new Error('run_with_model must be provider/model')
-    route = { provider: values.run_with_model.slice(0, separator), model: values.run_with_model.slice(separator + 1) }
+  if (value.run_with_model !== undefined) {
+    const separator = value.run_with_model.indexOf('/')
+    if (separator <= 0 || separator === value.run_with_model.length - 1) throw new Error('run_with_model must be provider/model')
+    route = { provider: value.run_with_model.slice(0, separator), model: value.run_with_model.slice(separator + 1) }
   }
-  return Object.freeze({ id: values.id, name: values.name, enabled: values.enabled,
-    triggers: Object.freeze([...new Set(values.trigger)]), probability: values.activation_probability,
-    activationTools: Object.freeze(values.activation_tools), body,
-    ...route === undefined ? {} : { route },
-    ...values.reasoning_effort === undefined ? {} : { reasoningEffort: values.reasoning_effort },
-  })
+  if (value.thinking_level !== undefined && !['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(value.thinking_level)) {
+    throw new Error('thinking_level is unsupported')
+  }
+  return Object.freeze({ id: value.id, name: value.name, enabled: value.enabled, debug: value.debug,
+    triggers: Object.freeze([...new Set(value.trigger)]), probability: value.activation_probability,
+    activeForModels: Object.freeze(value.active_for_models),
+    ...(route === undefined ? {} : { route }),
+    ...(value.thinking_level === undefined ? {} : { thinkingLevel: value.thinking_level }),
+    ...(value.timeout_seconds === undefined ? {} : { timeoutSeconds: value.timeout_seconds }),
+    finalResponseRounds: value.final_response_rounds ?? 0,
+    activationTools: Object.freeze(value.activation_tools), tools: Object.freeze(value.tools), body })
 }
 
-/**
- * Read bounded top-level Markdown files and exclude every duplicate id.
- * @param config - Directory and read limits.
- * @returns Catalog with diagnostics; directory access failures reject the operation.
- */
-export async function loadDefinitions(config: Config): Promise<Catalog> {
+export async function loadDefinitions(input: ResolvedConfig | Config | ConfigInput): Promise<Catalog> {
+  const config = resolveConfig(input)
   await mkdir(config.definitionsDirectory, { recursive: true })
   const files = (await readdir(config.definitionsDirectory, { withFileTypes: true }))
     .filter(entry => entry.isFile() && entry.name.endsWith('.md')).map(entry => entry.name).sort()
@@ -101,7 +108,24 @@ export async function loadDefinitions(config: Config): Promise<Catalog> {
       definitions.push(parseDefinition(text, file.slice(0, -3)))
     } catch (error) { diagnostics.push(`${file}: ${error instanceof Error ? error.message : String(error)}`) }
   }
-  const duplicated = new Set(definitions.filter((definition, index) => definitions.findIndex(other => other.id === definition.id) !== index).map(definition => definition.id))
-  for (const id of duplicated) diagnostics.push(`duplicate Shadow id: ${id}; all definitions with this id are disabled`)
-  return { definitions: definitions.filter(definition => !duplicated.has(definition.id)), diagnostics }
+  const counts = new Map<string, number>()
+  for (const definition of definitions) counts.set(definition.id, (counts.get(definition.id) ?? 0) + 1)
+  const duplicateIds = new Set([...counts].filter(([, count]) => count > 1).map(([id]) => id))
+  for (const id of duplicateIds) diagnostics.push(`duplicate Shadow id: ${id}; all definitions with this id are disabled`)
+  return { definitions: definitions.filter(definition => !duplicateIds.has(definition.id)), diagnostics }
+}
+
+export function serializeDefinition(definition: Definition): string {
+  const frontmatter: Record<string, unknown> = {
+    id: definition.id, name: definition.name, enabled: definition.enabled, debug: definition.debug,
+    activation_probability: definition.probability, trigger: [...definition.triggers],
+    active_for_models: [...definition.activeForModels],
+    ...(definition.route === undefined ? {} : { run_with_model: `${definition.route.provider}/${definition.route.model}` }),
+    ...(definition.thinkingLevel === undefined ? {} : { thinking_level: definition.thinkingLevel }),
+    ...(definition.timeoutSeconds === undefined ? {} : { timeout_seconds: definition.timeoutSeconds }),
+    ...(definition.finalResponseRounds === 0 ? {} : { final_response_rounds: definition.finalResponseRounds }),
+    ...(definition.activationTools.length === 0 ? {} : { activation_tools: [...definition.activationTools] }),
+    tools: [...definition.tools],
+  }
+  return `---\n${Object.entries(frontmatter).map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join('\n')}\n---\n\n${definition.body}\n`
 }

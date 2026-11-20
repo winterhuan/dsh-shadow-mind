@@ -6,7 +6,7 @@
     "exactOptionalPropertyTypes": true, "noImplicitOverride": true,
     "noFallthroughCasesInSwitch": true, "noUnusedLocals": true,
     "noUnusedParameters": true, "skipLibCheck": true, "types": ["node"],
-    "lib": ["es2024", "DOM"], "noEmit": true
+    "lib": ["es2024", "DOM"], "noEmit": true, "jsx": "react-jsx"
   },
   "include": ["src/**/*.ts", "tests/**/*.ts"]
 }

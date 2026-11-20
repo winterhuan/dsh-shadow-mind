@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { createAssistantMessage, createUserMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
 import { Config } from '../src/config.ts'
 import { captureTrajectory } from '../src/trajectory.ts'
 
@@ -27,4 +27,21 @@ it('bounds oversized text and marks omissions', () => {
   expect(trajectory.text).toContain('[truncated]')
   expect(trajectory.omitted).toBeGreaterThan(0)
   expect(trajectory.text).toContain('Message 19:')
+})
+
+it('redacts tool argument values before passing the trajectory to a Shadow', () => {
+  const session = Session.create(SessionId('redacted-trajectory'))
+  session.append('assistant/message', {
+    turn: 1,
+    step: 1,
+    message: createAssistantMessage({ source: { provider: 'fixture', model: 'fixture' }, content: [
+      { type: 'tool-call', id: ToolCallId('call-1'), name: 'search', arguments: JSON.stringify({ token: 'secret-value', query: 'private query' }) },
+    ] }),
+    stream: [],
+  }, { surfaceOp: 'append' })
+  const trajectory = captureTrajectory(session, Config({ definitionsDirectory: '/unused' }))
+  expect(trajectory.text).toContain('token: [redacted]')
+  expect(trajectory.text).toContain('query: [redacted]')
+  expect(trajectory.text).not.toContain('secret-value')
+  expect(trajectory.text).not.toContain('private query')
 })

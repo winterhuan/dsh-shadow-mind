@@ -12,13 +12,13 @@ import * as Spawn from '@deepseek-ai/dsh-subagent-spawn-in-process'
 import Commands from '@deepseek-ai/dsh-commands'
 import SubprocessLocal from '@deepseek-ai/dsh-subprocess-local'
 import { LlmAdapter, ToolCallId, createUserMessage } from '@deepseek-ai/dsh-llm'
-import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
+import type { GenerateOptions, LlmModelReasoningInfo, StreamChunk } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { parse } from 'yaml'
 import { onTestFinished } from 'vitest'
 import ShadowMind from '../../src/index.ts'
 import * as ShadowCommands from '../../src/commands.ts'
-import type { Config } from '../../src/config.ts'
+import type { ConfigInput } from '../../src/config.ts'
 
 export function textResponse(text: string): StreamChunk[] {
   return [{ type: 'block-start', index: 0, blockType: 'text' }, { type: 'text-delta', index: 0, text },
@@ -38,13 +38,14 @@ export type Respond = (options: GenerateOptions, child: boolean) => AsyncIterabl
 
 export class Adapter extends LlmAdapter {
   readonly requests: GenerateOptions[] = []
-  constructor(private readonly respond: Respond) { super() }
+  constructor(private readonly respond: Respond, private readonly reasoning?: LlmModelReasoningInfo) { super() }
   override resolveModel(provider: string, model: string) {
-    return Promise.resolve({ provider, id: model, name: model, context: { contextWindow: 200000 } })
+    return Promise.resolve({ provider, id: model, name: model, context: { contextWindow: 200000 },
+      ...(this.reasoning === undefined ? {} : { reasoning: this.reasoning }) })
   }
   async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     this.requests.push(options)
-    yield* this.respond(options, options.tools?.some(tool => tool.name === 'structured_output') === true)
+    yield* this.respond(options, options.tools?.some(tool => tool.name === 'structured_output' || tool.name === 'report_to_main') === true)
   }
 }
 
@@ -53,11 +54,11 @@ export function reportResponse(options: GenerateOptions, content = 'The result o
   return toolResponse('structured_output', { status: 'report', content, refs: [ref] })
 }
 
-export async function harness(respond: Respond, config: Partial<Config> = {}, definitions = ['completion']) {
+export async function harness(respond: Respond, config: Partial<ConfigInput> = {}, definitions = ['completion'], reasoning?: LlmModelReasoningInfo) {
   const directory = await mkdtemp(join(tmpdir(), 'shadow-mind-test-'))
   const ctx = new Context()
   onTestFinished(async () => { await ctx.fiber.dispose(); await rm(directory, { recursive: true, force: true }) })
-  const adapter = new Adapter(respond)
+  const adapter = new Adapter(respond, reasoning)
   const workspace = join(directory, 'workspace')
   await mkdir(workspace)
   await writeFile(join(workspace, 'evidence.txt'), 'A fixture file that the reviewer can read.\n')

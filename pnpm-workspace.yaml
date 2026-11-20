@@ -3,5 +3,6 @@ packages:
 
 allowBuilds:
   '@deepseek-ai/dsh-subprocess-local': true
+  esbuild: true
   koffi: true
   node-pty: true

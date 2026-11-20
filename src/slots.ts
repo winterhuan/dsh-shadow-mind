@@ -12,7 +12,13 @@ export class Slots {
   private occupied = 0
   private readonly queue: Waiter[] = []
 
-  constructor(private readonly limit: number) {}
+  constructor(private limit: number) {}
+
+  /** Apply a live settings update to future admissions. */
+  setLimit(limit: number): void {
+    this.limit = limit
+    this.pump()
+  }
 
   /**
    * Reserve one slot or wait in FIFO order.
@@ -43,12 +49,18 @@ export class Slots {
     return () => {
       if (released) return
       released = true
-      const next = this.queue.shift()
-      if (next === undefined) this.occupied -= 1
-      else {
-        next.signal.removeEventListener('abort', next.abort)
-        next.accept(this.releaseHandle())
-      }
+      this.occupied -= 1
+      this.pump()
+    }
+  }
+
+  private pump(): void {
+    while (this.occupied < this.limit && this.queue.length > 0) {
+      const next = this.queue.shift()!
+      if (next.signal.aborted) continue
+      this.occupied += 1
+      next.signal.removeEventListener('abort', next.abort)
+      next.accept(this.releaseHandle())
     }
   }
 }

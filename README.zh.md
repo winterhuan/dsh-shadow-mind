@@ -1,5 +1,5 @@
 ---
-description: "通过 Markdown 职责、后台检查和完成反馈，为 DSH 任务配置独立只读审查。"
+description: "通过 Markdown 职责、后台检查和完成反馈，为 DSH 任务配置独立审查与明确授权的 worker。"
 kind: "package-bundle"
 ---
 
@@ -9,7 +9,7 @@ kind: "package-bundle"
 
 ## Summary
 
-在主智能体工作期间及回合结束前，独立审查任务。用 Markdown 定义审查职责；可执行的问题会携带证据引用和子会话地址返回主智能体。使用 `/shadow` 查看状态、暂停、恢复或主动检查。此包适配 DSH `0.2.2-rc.1`，会增加模型调用成本和完成延迟。
+在主智能体工作期间及回合结束前，独立审查任务。用 Markdown 定义职责；可执行的问题会携带证据引用和子会话地址返回主智能体。职责可以授予明确的 worker 工具，普通审查仍保持只读。使用 `/shadow` 查看状态、暂停、恢复、管理定义或主动检查。组合包还通过 DSH 原生 UI 槽位提供插件设置卡片和按会话显示的活动状态。此包适配 DSH `0.2.2-rc.1`，会增加模型调用成本和完成延迟。
 
 ## Table of Contents
 
@@ -34,7 +34,7 @@ kind: "package-bundle"
 将固定 Git 提交安装到已有的 Web profile，然后重启 DSH。安装层会启用调度器、命令和审查 preset；职责文件需要单独添加。没有已启用的职责时，不会启动模型审查。
 
 ```sh
-dsh plugin --profile web add github:winterhuan/dsh-shadow-mind#v0.2.1
+dsh plugin --profile web add github:winterhuan/dsh-shadow-mind#v0.2.2
 ```
 
 ### 安装本地构建
@@ -74,11 +74,19 @@ dsh --profile shadow-dev --patch "$DSH_HOME/workspace.patch.yml" --host 127.0.0.
 /shadow status
 /shadow check
 /shadow check completion
+/shadow probe completion read,grep
+/shadow list
+/shadow clean
+/shadow auto off
 /shadow pause
 /shadow resume
 ```
 
 `check` 等待所有已启用职责或指定 id 完成。执行前必须已有一个人类任务；存在并发批次或会话已暂停时会拒绝执行。人工检查忽略触发概率，并计为该任务的最终检查。`pause` 取消活动审查并等待子会话清理；`resume` 启用后续触发，不重放旧工作。暂停状态、已认领检查和近期结果会在会话恢复后保留。
+
+`probe` 立即运行一个已启用的职责；省略 id 时从符合条件的职责中随机选择。逗号分隔的工具列表只对本次运行生效，并将其切换为 worker 模式。`list` 输出职责目录，`clean` 取消活动运行，`auto on|off` 控制心跳调度。
+
+根智能体还会获得 `list_shadows`、`create_shadow`、`update_shadow`、`enable_shadow`、`disable_shadow`、`delete_shadow`、`trigger_shadow`、`read_shadow_config` 和 `write_shadow_config`。定义和配置写入文件前会请求 DSH 用户审批。
 
 ### 定义职责
 
@@ -89,12 +97,13 @@ dsh --profile shadow-dev --patch "$DSH_HOME/workspace.patch.yml" --host 127.0.0.
 | `id`, `name` | 去掉 `.md` 的文件名 | 稳定的小写 id 和显示名称。 |
 | `enabled` | `true` | 无需删除文件即可禁用职责。 |
 | `trigger` | `[final_response]` | 包含 `heartbeat`、`final_response` 或两者的列表。 |
-| `activation_probability` | `0.1` | 每次符合条件的心跳触发概率；最终和人工检查始终执行。 |
+| `activation_probability` | `0.3` | 每次符合条件的心跳触发概率；最终和人工检查始终执行。 |
 | `activation_tools` | `[]` | 可选的精确工具名；完成步骤含这些工具时才符合心跳条件。 |
+| `tools` | `[]` | 明确的 worker 工具名。任意非空列表都会将运行切换为 worker 模式，并根据父 preset 检查可用性。 |
 | `run_with_model` | 父会话模型 | 显式 `provider/model`；两者都必须在 profile 中可用。 |
-| `reasoning_effort` | 继承设置 | 可选的模型支持的推理设置。 |
+| `thinking_level` | 全局默认值 (`high`) | 可选的模型支持的推理设置；优先于全局默认值。 |
 
-Markdown 正文定义审查职责。不支持的字段（包括 `tools`）会报错；职责不能授予额外工具。无效文件会在状态中显示，id 重复的所有职责都会被排除。目录文件数超过上限时整批拒绝执行。
+Markdown 正文定义职责。worker 工具是明确的能力授予，不会无条件复制父智能体的全部工具。无效文件会在状态中显示，id 重复的所有职责都会被排除。目录文件数超过上限时整批拒绝执行。
 
 ### 限制成本和排查失败
 
@@ -103,14 +112,22 @@ Markdown 正文定义审查职责。不支持的字段（包括 `tools`）会报
 | 设置 | 默认值 | 作用 |
 | --- | --- | --- |
 | `definitionsDirectory` | `$DSH_HOME/shadow-minds` | 职责文件目录。 |
+| `heartbeatProbability` | `0.2` | 符合条件的后台审查触发概率。 |
+| `heartbeatTools` | `[]` | 可使心跳符合条件的已完成工具。 |
 | `maxParallel` | `2` | 本插件实例的并发审查数。 |
 | `timeoutSeconds` | `120` | 单次审查时限，包含等待槽位和启动子会话。 |
+| `headlessDrainTimeoutSeconds` | `30` | 插件卸载时等待活动子会话的最长时间。 |
+| `resultBatchWindowMs` | `250` | 合并同一批报告的等待时间。 |
 | `maxHeartbeatRunsPerTask` | `4` | 每个人类任务的尝试预算；跳过或失败的尝试也消耗预算。 |
 | `maxDefinitions` | `16` | 目录中 Markdown 文件的最大数量。 |
 | `maxDefinitionBytes` | `16384` | 每个定义的最大字节数。 |
 | `maxTrajectoryChars`, `maxEntryChars` | `48000`, `8000` | 轨迹总字符数和单条内容字符数上限。 |
 | `maxReportChars` | `4000` | 每个审查者可提交的问题文本长度上限。 |
 | `maxOutputTokens` | `4096` | 请求的子会话输出 token 预算。 |
+| `excludedExtensions` | `[]` | 从轨迹中排除的文件扩展名。 |
+| `defaultShadowModel` | 未设置 | 定义未指定模型时使用的 provider/model。 |
+| `defaultThinkingLevel` | `high` | 子模型的默认推理等级。 |
+| `randomSeed` | `0` | 用于确定调度决策的随机种子。 |
 
 容量占满时后台检查跳过，最终和人工检查排队。新的人类输入会取消上一任务的审查，迟到报告会被丢弃。状态区分 `silent`、`not_relevant`、`failed`、`timeout`、`cancelled` 和 `skipped`；基础设施失败不会被当作审查通过。原生错误可在子会话记录中查看。若上下文超限，请降低轨迹上限或选择上下文窗口更大的模型。
 
@@ -124,7 +141,7 @@ Markdown 正文定义审查职责。不支持的字段（包括 `tools`）会报
 
 [调度器](src/index.ts) 观察包含工具执行的 `step/end`，并接入 `agent/turn-stopping`。它先等待未完成的后台工作，再认领最终批次，随后将问题作为中继消息送入主会话。认领归属最新的真实用户消息，因此主智能体修正答案不会再次触发最终审查。
 
-每次激活使用[审查 preset](cordis.patch.yml)、项目指令、有界的[有效轨迹](src/trajectory.ts)和结构化输出启动全新原生子会话。轨迹遵循会话表面的替换记录，省略推理和原始工具结果正文；子会话需要独立读取相关文件。[策略](src/review-policy.ts)过滤对模型展示的工具并拒绝越界调用。它包裹指令加载器，确保预算检查包含新加入的项目指令。
+每次激活使用有界的[有效轨迹](src/trajectory.ts)、项目指令启动全新原生子会话。只读审查使用[审查 preset](cordis.patch.yml)和结构化输出；worker 组合父 preset，只获得配置的工具，并通过 `report_to_main` 回报。轨迹遵循会话表面的替换记录，省略推理和原始工具结果正文；子会话需要独立读取相关文件。[策略](src/review-policy.ts)过滤对模型展示的工具并拒绝越界调用。它包裹指令加载器，确保预算检查包含新加入的项目指令。
 
 [结果校验](src/report.ts)接受 `report`、`silent` 或 `not_relevant`。报告必须包含可执行问题和至少一个已展示的事件序号引用；引用标识的是已提供的观察，不代表事实已经独立验证。一个批次合并被接受的问题，并按完全相同的文本去重。[会话记录](src/records.ts)保存元数据而不改变模型上下文；被接受的反馈是普通持久消息。插件不会在重启后重放未完成的审查。
 
@@ -148,7 +165,7 @@ Markdown 正文定义审查职责。不支持的字段（包括 `tools`）会报
 
 #### What the model sees
 
-主模型不会获得新工具或持久提示前缀。可执行问题以 `shadow-report` 中继消息送达，附带审查者身份、子会话地址和事件引用。每个全新子会话接收自己的职责、引用的观察、项目指令，以及仅有的 `read`、`grep`、`glob` 和 `structured_output` 工具。人工命令结果和调度元数据不进入模型上下文。
+主模型会获得上面列出的管理工具，但不会获得持久提示前缀。问题和 worker 摘要以 `shadow-report` 中继消息送达，附带子会话地址和事件引用。审查子会话只有 `read`、`grep`、`glob` 和 `structured_output`；worker 子会话获得默认只读工具、明确授予的工具以及 `report_to_main`。人工命令结果和调度元数据不进入模型上下文。
 
 #### Token effect
 
@@ -165,7 +182,7 @@ Markdown 正文定义审查职责。不支持的字段（包括 `tools`）会报
 - 最终检查延迟回合完成，但流式答案文本可能在审查结束前显示。问题反馈促使修正，不会隐藏或替换首个答案。
 - 只读工具范围不是操作系统沙箱。配置的文件系统提供者控制可读取路径，允许工具名下的自定义实现仍被信任。
 - 后台证据来自活动工作区的快照。引用和字节预算不能证明语义正确性、快照隔离或完整覆盖。
-- 插件需要原生本地 `spawn` 提供者和 preset 组合。没有自定义面板、职责管理工具或中断审查自动重放。会话格式迁移可能省略插件元数据。
+- 插件需要原生本地 `spawn` 提供者和 preset 组合。没有独立的审查工作台；配置位于插件设置卡片，活动状态显示在 DSH 原生会话界面。中断的审查不会自动重放，会话格式迁移可能省略插件元数据。
 - 真实模型审查质量、Linux/Windows 验收和自定义 headless 组合尚未验证。
 
 <a id="dev-note"></a>

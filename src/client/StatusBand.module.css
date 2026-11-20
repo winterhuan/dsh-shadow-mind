@@ -1,0 +1,15 @@
+.band {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--dsh-space-2, 8px) var(--dsh-space-4, 16px);
+  min-height: 28px;
+  padding: 4px 12px;
+  color: var(--dsh-ink-secondary, #555);
+  font-size: 12px;
+}
+
+.title {
+  color: var(--dsh-ink-primary, #222);
+  font-weight: 500;
+}

@@ -6,8 +6,8 @@ import { Config } from '../src/config.ts'
 import { loadDefinitions, parseDefinition } from '../src/definitions.ts'
 
 describe('Markdown definition admission', () => {
-  it('rejects tools and malformed model routes instead of silently broadening access', () => {
-    expect(() => parseDefinition('---\ntools: [bash]\n---\nReview.', 'review')).toThrow('unsupported field: tools')
+  it('admits explicit tool grants and rejects malformed model routes', () => {
+    expect(parseDefinition('---\ntools: [bash]\n---\nReview.', 'review').tools).toEqual(['bash'])
     expect(() => parseDefinition('---\nrun_with_model: incomplete\n---\nReview.', 'review')).toThrow('provider/model')
     expect(parseDefinition('---\nrun_with_model: provider/org/model\n---\nReview.', 'review').route).toEqual({ provider: 'provider', model: 'org/model' })
   })

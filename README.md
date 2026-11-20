@@ -1,5 +1,5 @@
 ---
-description: "Configure independent read-only reviews of DSH tasks with Markdown responsibilities, background checks, and completion feedback."
+description: "Configure independent reviews and explicitly scoped workers for DSH tasks."
 kind: "package-bundle"
 ---
 
@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Review a task independently while the main agent works and before its turn ends. Define each review responsibility in Markdown; actionable findings return to the main agent with evidence references and a child-session address. Use `/shadow` to inspect, pause, resume, or request a review. This bundle targets DSH `0.2.2-rc.1` and adds model cost and completion latency.
+Review a task independently while the main agent works and before its turn ends. Define each responsibility in Markdown; actionable findings return to the main agent with evidence references and a child-session address. Responsibilities may grant explicit worker tools, while reviews remain read-only. Use `/shadow` to inspect, pause, resume, manage definitions, or request a review. The bundle also contributes a native plugin settings card and session-scoped activity surfaces through DSH UI slots. This bundle targets DSH `0.2.2-rc.1` and adds model cost and completion latency.
 
 ## Table of Contents
 
@@ -34,7 +34,7 @@ If this profile has the unscoped `dsh-shadow-mind` package, remove that layer wi
 Install the fixed Git revision into your existing Web profile, then restart DSH. The bundle activates its scheduler, commands, and review preset; add responsibility files separately. Without enabled definitions, it does not start model reviews.
 
 ```sh
-dsh plugin --profile web add github:winterhuan/dsh-shadow-mind#v0.2.1
+dsh plugin --profile web add github:winterhuan/dsh-shadow-mind#v0.2.2
 ```
 
 ### Install a local build
@@ -74,11 +74,19 @@ Commands act on the current root session. The command result shows recent outcom
 /shadow status
 /shadow check
 /shadow check completion
+/shadow probe completion read,grep
+/shadow list
+/shadow clean
+/shadow auto off
 /shadow pause
 /shadow resume
 ```
 
 `check` waits for all enabled definitions or the selected id. It requires a previous human task and refuses a concurrent batch or a paused session. Manual checks ignore trigger probability and count as the final check for that task. `pause` cancels active reviews and waits for child cleanup; `resume` enables future triggers without replaying old work. Pause state, claimed checks, and recent outcomes survive session restoration.
+
+`probe` runs one enabled definition immediately; without an id it selects one eligible definition at random. A comma-separated tool list temporarily switches that run to worker mode. `list` prints the definition catalog, `clean` cancels active runs, and `auto on|off` controls heartbeat scheduling.
+
+The root agent also receives `list_shadows`, `create_shadow`, `update_shadow`, `enable_shadow`, `disable_shadow`, `delete_shadow`, `trigger_shadow`, `read_shadow_config`, and `write_shadow_config`. Definition and configuration writes request DSH user approval before changing files.
 
 ### Define responsibilities
 
@@ -89,12 +97,13 @@ Store top-level `.md` files in `$DSH_HOME/shadow-minds`. The scheduler reloads t
 | `id`, `name` | Filename without `.md` | Stable lowercase id and display name. |
 | `enabled` | `true` | Disable a responsibility without deleting it. |
 | `trigger` | `[final_response]` | List containing `heartbeat`, `final_response`, or both. |
-| `activation_probability` | `0.1` | Probability per eligible heartbeat; final and manual checks always run. |
+| `activation_probability` | `0.3` | Probability per eligible heartbeat; final and manual checks always run. |
 | `activation_tools` | `[]` | Optional exact tool names that qualify a completed step for a heartbeat. |
+| `tools` | `[]` | Explicit worker tool names. Any non-empty list changes the run from review mode to worker mode and is checked against the parent preset. |
 | `run_with_model` | Parent model | Explicit `provider/model`; both must be available to the profile. |
-| `reasoning_effort` | Inherited setting | Optional model-supported reasoning setting. |
+| `thinking_level` | Global default (`high`) | Optional model-supported reasoning setting; overrides the global default. |
 
-The Markdown body defines the review responsibility. Unsupported fields, including `tools`, are errors; a definition cannot grant extra tools. Invalid files remain visible in status, and every definition sharing a duplicate id is excluded. Exceeding the directory-wide definition limit rejects the batch.
+The Markdown body defines the responsibility. Worker tools are explicit capabilities, not an unrestricted copy of the parent agent. Invalid files remain visible in status, and every definition sharing a duplicate id is excluded. Exceeding the directory-wide definition limit rejects the batch.
 
 ### Bound cost and diagnose failures
 
@@ -103,14 +112,22 @@ Override the `shadow-mind-runtime` row in a profile patch to change these settin
 | Setting | Default | Effect |
 | --- | --- | --- |
 | `definitionsDirectory` | `$DSH_HOME/shadow-minds` | Responsibility files. |
+| `heartbeatProbability` | `0.2` | Probability of an eligible background review. |
+| `heartbeatTools` | `[]` | Completed tools that qualify a heartbeat. |
 | `maxParallel` | `2` | Concurrent reviews across this plugin instance. |
 | `timeoutSeconds` | `120` | Per-review deadline including slot waiting and child startup. |
+| `headlessDrainTimeoutSeconds` | `30` | Maximum wait for active children while the plugin unloads. |
+| `resultBatchWindowMs` | `250` | Delay used to combine reports from one batch. |
 | `maxHeartbeatRunsPerTask` | `4` | Attempt budget per human task; skipped or failed attempts consume it. |
 | `maxDefinitions` | `16` | Maximum Markdown files in the directory. |
 | `maxDefinitionBytes` | `16384` | Maximum bytes per definition. |
 | `maxTrajectoryChars`, `maxEntryChars` | `48000`, `8000` | Total trajectory and per-entry text limits. |
 | `maxReportChars` | `4000` | Maximum accepted finding text per reviewer. |
 | `maxOutputTokens` | `4096` | Requested child output budget. |
+| `excludedExtensions` | `[]` | File extensions omitted from the captured trajectory. |
+| `defaultShadowModel` | unset | Provider/model used when a definition has no route. |
+| `defaultThinkingLevel` | `high` | Fallback reasoning level for child models. |
+| `randomSeed` | `0` | Seed for deterministic scheduling decisions. |
 
 Background checks skip when capacity is occupied; final and manual checks queue. New human input cancels reviews of the previous task, and their late reports are discarded. Status distinguishes `silent`, `not_relevant`, `failed`, `timeout`, `cancelled`, and `skipped`; an infrastructure failure never counts as a clean review. Open the child transcript for native errors. For an oversized-context error, reduce trajectory limits or choose a model with a larger context window.
 
@@ -124,7 +141,7 @@ Background checks skip when capacity is occupied; final and manual checks queue.
 
 [The scheduler](src/index.ts) observes tool-bearing `step/end` events and intercepts `agent/turn-stopping`. It joins pending background work before claiming a final batch, then admits findings as a relay message. A claim belongs to the latest real user message, so the main agent's correction does not start another final review.
 
-Each activation starts a fresh native child with the [review preset](cordis.patch.yml), project instructions, a bounded [effective trajectory](src/trajectory.ts), and structured output. Replacements in the session surface are respected. Reasoning and raw tool-result bodies are omitted; the child must inspect relevant files independently. [The policy](src/review-policy.ts) filters advertised tools and rejects disallowed execution. It wraps the instruction loader so its budget check includes newly admitted project instructions.
+Each activation starts a fresh native child with a bounded [effective trajectory](src/trajectory.ts) and project instructions. Read-only reviews use the [review preset](cordis.patch.yml) and structured output; workers compose the parent preset, receive only the configured tools, and report through `report_to_main`. Replacements in the session surface are respected. Reasoning and raw tool-result bodies are omitted; the child must inspect relevant files independently. [The policy](src/review-policy.ts) filters advertised tools and rejects disallowed execution. It wraps the instruction loader so its budget check includes newly admitted project instructions.
 
 [Result validation](src/report.ts) accepts `report`, `silent`, or `not_relevant`. A report requires actionable text and at least one displayed event sequence reference; references identify supplied observations, not independently verified truth. A batch combines accepted findings and deduplicates identical text. [Session records](src/records.ts) retain metadata without changing model context; accepted feedback is an ordinary durable message. The plugin never replays unfinished reviews after restart.
 
@@ -148,7 +165,7 @@ Run `pnpm run typecheck`, `pnpm run build`, `pnpm test`, and `pnpm run check:pac
 
 #### What the model sees
 
-The main model receives no new tools or persistent prompt prefix. It receives actionable findings as `shadow-report` relay messages with reviewer identity, child-session address, and event references. Each fresh child receives its responsibility, quoted observations, project instructions, and only `read`, `grep`, `glob`, and `structured_output`. Human command results and scheduler metadata stay outside model context.
+The main model receives the management tools listed above and no persistent prompt prefix. It receives findings and worker summaries as `shadow-report` relay messages with child-session addresses and event references. Review children receive only `read`, `grep`, `glob`, and `structured_output`; worker children receive the default read-only set plus their explicit grants and `report_to_main`. Human command results and scheduler metadata stay outside model context.
 
 #### Token effect
 
@@ -165,7 +182,7 @@ The main request prefix remains unchanged until ordinary feedback extends its hi
 - Final checks delay turn completion, but streamed answer text can appear before review finishes. Findings invite a correction; they do not hide or replace the first answer.
 - Read-only tool exposure is not an operating-system sandbox. The configured filesystem provider controls readable paths, and custom implementations under allowed tool names remain trusted.
 - Background evidence is a snapshot of a live workspace. Citations and byte budgets do not prove semantic correctness, snapshot isolation, or complete coverage.
-- The plugin requires the native local `spawn` provider and preset composition. It has no custom panel, definition-management tools, or automatic replay of interrupted reviews. Session-format migrations may omit plugin metadata.
+- The plugin requires the native local `spawn` provider and preset composition. It has no separate review workbench; configuration lives in its plugin settings card and activity appears in native Session surfaces. Interrupted reviews are not replayed, and Session-format migrations may omit plugin metadata.
 - Real-model review quality, Linux/Windows acceptance, and custom headless composition have not been validated.
 
 <a id="dev-note"></a>

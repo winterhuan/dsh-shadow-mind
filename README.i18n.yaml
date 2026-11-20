@@ -3,14 +3,14 @@
 # After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write README.md
 /:
-  en: f969240028cc2128
-  zh: 97a09d75e0b3498c
+  en: 5a60b8986f961832
+  zh: 13e9da3a44ab215d
 /winterhuan-dsh-shadow-mind:
   en: e4f0eb2437205e57
   zh: 608aef2d8ea169d9
 /winterhuan-dsh-shadow-mind/summary:
-  en: 9eeeea22b8f0fe0b
-  zh: 77cec84dc38b8014
+  en: 7b4ec30141ba01ef
+  zh: 8fe58e46ee9a4476
 /winterhuan-dsh-shadow-mind/table-of-contents:
   en: d152484eb41ac6b4
   zh: 02895123c7bd71cf
@@ -24,17 +24,17 @@
   en: c98434fbcf544d6a
   zh: 58e43433f3d21547
 /winterhuan-dsh-shadow-mind/use-this-package/control-reviews:
-  en: 54bdabe565744e2c
-  zh: 94d08d99715cf2d6
+  en: d554bc6d4853ecbf
+  zh: 20856265107a9222
 /winterhuan-dsh-shadow-mind/use-this-package/define-responsibilities:
-  en: c9f56cf87c4970b7
-  zh: a343fb51270c7ab1
+  en: 8be871bb035d05f3
+  zh: 5847f406e5bca5eb
 /winterhuan-dsh-shadow-mind/use-this-package/bound-cost-and-diagnose-failures:
-  en: 9c7235fbb3982a1f
-  zh: a8774eaa21a447b2
+  en: a647a06a625da21f
+  zh: 7f951b2653f79abc
 /winterhuan-dsh-shadow-mind/understand-the-implementation:
-  en: df697b4a3b0d73fd
-  zh: a070f3e609210d47
+  en: 57974e0ca014ef21
+  zh: be3121806bac737f
 /winterhuan-dsh-shadow-mind/further-exploration:
   en: 7feb9e6f294db0e1
   zh: e806c694ee056620
@@ -45,8 +45,8 @@
   en: 7a5342615bb50e9c
   zh: 9d1b948c4eb04e54
 /winterhuan-dsh-shadow-mind/model-experience/review-context-and-feedback/what-the-model-sees:
-  en: 86fa2b88d912448c
-  zh: 897842d21b6673b0
+  en: 3c9406c7f1cd9a73
+  zh: 97e72b0c8466201f
 /winterhuan-dsh-shadow-mind/model-experience/review-context-and-feedback/token-effect:
   en: b54c8f7252997303
   zh: 068a40a5651e14bf
@@ -54,8 +54,8 @@
   en: bdec20ee66012c87
   zh: 7a6037632cdd9b1d
 /winterhuan-dsh-shadow-mind/known-limitations-and-deferred-work:
-  en: b9de6ed7c5bcf967
-  zh: 6a8ebd2447b1b85f
+  en: 016afb1b59515938
+  zh: e26a5a9f6ac1a534
 /winterhuan-dsh-shadow-mind/known-limitations-and-deferred-work/dev-note:
   en: e67f633dc6fe7773
   zh: e671553cf1fad17f
