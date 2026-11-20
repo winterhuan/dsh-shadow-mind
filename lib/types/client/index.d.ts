@@ -5,6 +5,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
         'settings.shadowMind': ShadowLocaleKey;
     }
 }
+/** Locale namespace used by Shadow Mind's settings and activity surfaces. */
 export declare const NS = "settings.shadowMind";
 export declare const inject: string[];
 export declare function apply(ctx: Context, _config?: unknown): Promise<() => Promise<void>>;

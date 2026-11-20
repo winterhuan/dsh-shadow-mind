@@ -23,6 +23,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap { 'settings.shadowMind': ShadowLocaleKey }
 }
 
+/** Locale namespace used by Shadow Mind's settings and activity surfaces. */
 export const NS = 'settings.shadowMind'
 export const inject = ['remote', 'slots', 'locale', 'configForms']
 

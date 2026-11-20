@@ -34,7 +34,7 @@ kind: "package-bundle"
 将固定 Git 提交安装到已有的 Web profile，然后重启 DSH。安装层会启用调度器、命令和审查 preset；职责文件需要单独添加。没有已启用的职责时，不会启动模型审查。
 
 ```sh
-dsh plugin --profile web add github:winterhuan/dsh-shadow-mind#v0.2.2
+dsh plugin --profile web add github:winterhuan/dsh-shadow-mind#v0.2.3
 ```
 
 ### 安装本地构建

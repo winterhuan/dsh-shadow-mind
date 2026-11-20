@@ -295,7 +295,10 @@ export class ShadowMind extends TypertRemoteService {
     active.dispose().catch(error => this.ctx.logger.warn('Shadow child cleanup failed: %s', message(error)))
   }
 
-  /** Read live configuration, definitions and current-session run state. */
+  /** Read live configuration, definitions and current-session run state.
+   * @param agent - Root-session Agent whose state should be described.
+   * @returns Human-readable status for the current root session.
+   */
   async status(agent: Agent): Promise<string> {
     const owner = this.owner(agent)
     const config = this.currentConfig()
@@ -308,7 +311,11 @@ export class ShadowMind extends TypertRemoteService {
     ].join('\n')
   }
 
-  /** Return only the live state owned by the requested root Session. */
+  /** Return only the live state owned by the requested root Session.
+   * @param sessionId - Root Session id whose state should be queried.
+   * @param signal - Cancellation signal for the Remote request.
+   * @returns Session-scoped Shadow Mind state, or an absent projection.
+   */
   @Remote({ resources: { session: (sessionId: SessionId) => sessionId } })
   async snapshot(sessionId: SessionId, signal: AbortSignal): Promise<ShadowMindSnapshot> {
     signal.throwIfAborted()
@@ -335,6 +342,11 @@ export class ShadowMind extends TypertRemoteService {
     }
   }
 
+  /** Pause or resume all Shadow work owned by a root session.
+   * @param agent - Root-session Agent whose work should be controlled.
+   * @param paused - Whether new and active Shadow runs should be paused.
+   * @returns Completion after active child runs have drained.
+   */
   async pause(agent: Agent, paused: boolean): Promise<void> {
     if (!this.root(agent) || this.ctx.agents.get(agent.id) !== agent) throw new Error('Shadow controls require a live root-session Agent')
     const owner = this.owner(agent)
@@ -346,6 +358,13 @@ export class ShadowMind extends TypertRemoteService {
     if (!paused) owner.controller = new AbortController()
   }
 
+  /** Run the selected responsibilities as a completion-style review batch.
+   * @param agent - Root-session Agent that owns the review.
+   * @param signal - Cancellation signal for the review batch.
+   * @param id - Optional responsibility id to run.
+   * @param extraTools - Optional tools granted for this invocation.
+   * @returns Completion after all selected runs settle.
+   */
   async review(agent: Agent, signal: AbortSignal, id?: string, extraTools: readonly string[] = []): Promise<void> {
     if (!this.root(agent) || this.ctx.agents.get(agent.id) !== agent) throw new Error('Shadow checks require a live root-session Agent')
     const owner = this.owner(agent)
@@ -357,6 +376,13 @@ export class ShadowMind extends TypertRemoteService {
     await pending
   }
 
+  /** Run one responsibility immediately and return the resulting status.
+   * @param agent - Root-session Agent that owns the probe.
+   * @param signal - Cancellation signal for the probe.
+   * @param id - Optional responsibility id; omitted selects one eligible id.
+   * @param extraTools - Optional tools granted for this invocation.
+   * @returns Current human-readable status after the probe settles.
+   */
   async probe(agent: Agent, signal: AbortSignal, id?: string, extraTools: readonly string[] = []): Promise<string> {
     if (!this.root(agent) || this.ctx.agents.get(agent.id) !== agent) throw new Error('Shadow probes require a live root-session Agent')
     const owner = this.owner(agent)
@@ -369,11 +395,19 @@ export class ShadowMind extends TypertRemoteService {
     return await this.status(agent)
   }
 
+  /** Enable or disable automatic heartbeat scheduling.
+   * @param enabled - Whether heartbeat-triggered runs should be scheduled.
+   * @returns Confirmation text for the new scheduler state.
+   */
   setAuto(enabled: boolean): string {
     this.autoEnabled = enabled
     return `Shadow automatic heartbeat reviews ${enabled ? 'enabled' : 'disabled'}.`
   }
 
+  /** Cancel active Shadow runs owned by a root session.
+   * @param agent - Root-session Agent whose active runs should be cancelled.
+   * @returns Confirmation text containing the number of stopped runs.
+   */
   async clean(agent: Agent): Promise<string> {
     if (!this.root(agent) || this.ctx.agents.get(agent.id) !== agent) throw new Error('Shadow controls require a live root-session Agent')
     const owner = this.owner(agent)
@@ -385,6 +419,13 @@ export class ShadowMind extends TypertRemoteService {
     return `Stopped ${count} active Shadow run${count === 1 ? '' : 's'}.`
   }
 
+  /** Apply an approved definition or runtime configuration operation.
+   * @param agent - Root-session Agent requesting the operation.
+   * @param operation - Management operation to execute.
+   * @param args - Operation-specific fields.
+   * @param signal - Optional cancellation signal while requesting approval.
+   * @returns Confirmation text or the requested catalog/configuration.
+   */
   async manage(agent: Agent, operation: 'list' | 'create' | 'update' | 'enable' | 'disable' | 'delete' | 'read-config' | 'update-config', args: Record<string, unknown> = {}, signal?: AbortSignal): Promise<string> {
     if (!this.root(agent) || this.ctx.agents.get(agent.id) !== agent) throw new Error('Shadow management requires a live root-session Agent')
     const config = this.currentConfig()
@@ -431,6 +472,11 @@ export class ShadowMind extends TypertRemoteService {
     await settings.update('shadow-mind-runtime', patch)
   }
 
+  /** Apply a management operation for the Agent initiating the current tool call.
+   * @param operation - Management operation to execute.
+   * @param args - Operation-specific fields.
+   * @returns Confirmation text or the requested catalog/configuration.
+   */
   async manageForCurrentAgent(operation: Parameters<ShadowMind['manage']>[1], args: Record<string, unknown> = {}): Promise<string> {
     const agent = this.ctx.agents.currentInitiator()
     if (agent === undefined || !this.root(agent)) throw new Error('Shadow management requires a live root-session tool call')
@@ -444,6 +490,11 @@ export class ShadowMind extends TypertRemoteService {
     }
   }
 
+  /** Accept a report sent by an active worker child.
+   * @param childId - Worker child Session id.
+   * @param runId - Active Shadow run id.
+   * @param report - Worker summary to relay to the root session.
+   */
   acceptRunReport(childId: SessionId, runId: string, report: WorkerReport): void {
     const active = this.active.get(childId)
     if (active !== undefined && active.runId === runId && active.mode === 'worker') { active.report(report); return }
@@ -655,6 +706,10 @@ export class ShadowMind extends TypertRemoteService {
     else agent.followup(message)
   }
 
+  /** Format reports waiting for delivery to a root session.
+   * @param agent - Root-session Agent whose reports should be listed.
+   * @returns Human-readable recent report text.
+   */
   async reports(agent: Agent): Promise<string> { return formatReports(this.batchesFor(agent).recent) }
 }
 

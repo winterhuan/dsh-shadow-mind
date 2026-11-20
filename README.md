@@ -34,7 +34,7 @@ If this profile has the unscoped `dsh-shadow-mind` package, remove that layer wi
 Install the fixed Git revision into your existing Web profile, then restart DSH. The bundle activates its scheduler, commands, and review preset; add responsibility files separately. Without enabled definitions, it does not start model reviews.
 
 ```sh
-dsh plugin --profile web add github:winterhuan/dsh-shadow-mind#v0.2.2
+dsh plugin --profile web add github:winterhuan/dsh-shadow-mind#v0.2.3
 ```
 
 ### Install a local build

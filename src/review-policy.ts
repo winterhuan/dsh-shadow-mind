@@ -43,6 +43,7 @@ export function apply(ctx: Context): void {
   ctx.tools.guard(execution => readOnly.has(execution.name) ? undefined : 'Shadow reviews only allow read, grep, glob, and structured_output.')
 }
 
+/** Capability and evidence limits applied to one Shadow child session. */
 export interface AgentPolicy {
   readonly runId: string
   readonly shadowId: string
@@ -56,7 +57,12 @@ export interface AgentPolicy {
   readonly maxReportChars: number
 }
 
-/** Install run-specific policy before DSH announces the child Agent. */
+/** Install run-specific policy before DSH announces the child Agent.
+ * @param agent - Child Agent receiving the capability mask.
+ * @param policy - Run-specific capabilities and evidence bounds.
+ * @param acceptReport - Callback for an accepted worker report.
+ * @returns Cleanup function that removes the child policy and report tool.
+ */
 export function applyShadowPolicy(agent: Agent, policy: AgentPolicy, acceptReport: (report: WorkerReport) => void): () => void {
   const context = agent.ctx
   const tools = context.get('tools')

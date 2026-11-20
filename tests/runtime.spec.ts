@@ -22,10 +22,11 @@ describe('native review lifecycle', () => {
     const { ctx } = await harness((_options, child) => child
       ? toolResponse('structured_output', { status: 'silent', content: '', refs: [] }) : textResponse('Done.'), { randomSeed: 0 }, [])
     const runtime = ctx.shadowMind
-    const internal = runtime as unknown as { random: () => number }
     Object.assign(runtime.config, { randomSeed: { get: () => 17 } })
     ctx.emit('loader/volatile-update', [['randomSeed']])
-    expect(internal.random()).toBe(createRandom(17)())
+    const random = Object.getOwnPropertyDescriptor(runtime, 'random')?.value
+    if (typeof random !== 'function') throw new Error('Shadow Mind random source is unavailable')
+    expect(random()).toBe(createRandom(17)())
   })
 
   it('registers the original management tools on the root agent', async () => {
